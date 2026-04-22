@@ -163,4 +163,120 @@ final class PublicAPITests: XCTestCase {
 
         return samples
     }
+
+    // MARK: - ChordDetector Public API
+
+    func testChordDetectorPublicInit() {
+        let library = CanonicalChromaLibrary()
+        // Should be able to construct via public init with required template library
+        let detector = ChordDetector(chromaTemplateLibrary: library)
+        XCTAssertNotNil(detector)
+    }
+
+    func testChordDetectorPublicInitWithClassifier() {
+        let library = CanonicalChromaLibrary()
+        let stub = StubClassifierProvider()
+        // Should support optional classifier provider
+        let detector = ChordDetector(chromaTemplateLibrary: library, classifierProvider: stub)
+        XCTAssertNotNil(detector)
+    }
+
+    func testChordDetectorDetectChordFromChroma() {
+        let library = CanonicalChromaLibrary()
+        let detector = ChordDetector(chromaTemplateLibrary: library)
+
+        // C major chroma: strong C, E, G
+        let cMajorChroma: [Double] = [1.0, 0.0, 0.1, 0.0, 0.8, 0.0, 0.05, 0.6, 0.0, 0.0, 0.0, 0.0]
+        let result = detector.detectChord(chroma: cMajorChroma)
+
+        XCTAssertNotNil(result)
+        XCTAssertNotNil(result?.chord)
+        XCTAssertGreaterThan(result?.chord.confidence ?? 0, 0.0)
+    }
+
+    func testChordDetectorReset() {
+        let library = CanonicalChromaLibrary()
+        let detector = ChordDetector(chromaTemplateLibrary: library)
+
+        // After reset, should not have processed chroma
+        detector.reset()
+        XCTAssertNil(detector.lastProcessedChroma)
+        XCTAssertFalse(detector.isNoiseBaselineCalibrated)
+    }
+
+    func testChordDetectorTuningKnobsAsParameters() {
+        let library = CanonicalChromaLibrary()
+        // Should be able to pass custom tuning parameters
+        let detector = ChordDetector(
+            chromaTemplateLibrary: library,
+            silenceCalibrationThreshold: 6.0,
+            subtractFloor: 0.15,
+            energyGateMultiplier: 0.6,
+            confidenceFallbackThreshold: 0.50,
+            agreementBoostFull: 0.12,
+            agreementBoostRootOnly: 0.06
+        )
+        XCTAssertNotNil(detector)
+    }
+
+    // MARK: - IntervalDetector Public API
+
+    func testIntervalDetectorDetectChord() {
+        // C major: C, E, G
+        let cMajorChroma: [Double] = [1.0, 0.0, 0.1, 0.0, 0.8, 0.0, 0.0, 0.6, 0.0, 0.0, 0.0, 0.0]
+        let result = IntervalDetector.detect(chroma: cMajorChroma)
+
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.root, NoteName.C)
+        XCTAssertEqual(result?.quality, ChordQuality.major)
+        XCTAssertGreaterThan(result?.confidence ?? 0, 0.0)
+    }
+
+    func testIntervalDetectorMinorChord() {
+        // A minor: A (9), C (0), E (4)
+        // Using significant energy at these bins
+        var aMinorChroma = [Double](repeating: 0, count: 12)
+        aMinorChroma[9] = 1.0   // A
+        aMinorChroma[0] = 0.7   // C
+        aMinorChroma[4] = 0.8   // E
+
+        let result = IntervalDetector.detect(chroma: aMinorChroma)
+
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.root, NoteName.A)
+        XCTAssertEqual(result?.quality, ChordQuality.minor)
+    }
+
+    func testIntervalDetectorPowerChord() {
+        // G5: G (7) and D (2) with enough energy to trigger power chord path
+        // Also add minor 3rd (Bb at 10) to help with chord completion
+        var g5Chroma = [Double](repeating: 0, count: 12)
+        g5Chroma[7] = 1.0    // G
+        g5Chroma[2] = 0.9    // D
+        g5Chroma[10] = 0.12  // Bb for minor 3rd above threshold
+
+        let result = IntervalDetector.detect(chroma: g5Chroma)
+
+        XCTAssertNotNil(result)
+        if let r = result {
+            XCTAssertEqual(r.root, NoteName.G)
+        }
+    }
+
+    func testIntervalDetectorWithRawChromaMinorProtection() {
+        // Test minor 3rd protection with raw chroma parameter
+        let processedChroma: [Double] = [1.0, 0.0, 0.0, 0.0, 0.8, 0.0, 0.0, 0.6, 0.0, 0.0, 0.0, 0.0]
+        let rawChroma: [Double] = [1.0, 0.0, 0.3, 0.0, 0.7, 0.0, 0.0, 0.6, 0.0, 0.0, 0.0, 0.0]
+
+        let result = IntervalDetector.detect(chroma: processedChroma, rawChroma: rawChroma)
+        XCTAssertNotNil(result)
+    }
+
+    // MARK: - Stub Classifier Provider
+
+    private class StubClassifierProvider: ChordClassifierProvider {
+        func classifyChroma(_ chroma: [Double]) -> (name: String, confidence: Double)? {
+            return ("C", 0.95)
+        }
+    }
 }
