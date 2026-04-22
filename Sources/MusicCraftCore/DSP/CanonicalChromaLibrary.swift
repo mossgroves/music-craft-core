@@ -1,7 +1,9 @@
 import Foundation
 
-enum ReferenceChromaLibrary {
-    static let vectors: [String: [Float]] = [
+/// Canonical (theoretical) chroma templates conforming to ChromaTemplateLibrary.
+/// Provides 120 templates covering 12 roots × 10 chord qualities (major, minor, 7, maj7, m7, dim, aug, sus2, sus4, m(maj7)).
+public struct CanonicalChromaLibrary: ChromaTemplateLibrary {
+    private let vectors: [String: [Float]] = [
         // C
         "C": [1.0, 0.0, 0.1, 0.0, 0.05, 0.0, 0.02, 0.0, 0.01, 0.0, 0.0, 0.0],
         "Cm": [1.0, 0.0, 0.08, 0.0, 0.05, 0.05, 0.02, 0.0, 0.01, 0.05, 0.0, 0.0],
@@ -136,7 +138,11 @@ enum ReferenceChromaLibrary {
         "Bm(maj7)": [0.0, 0.08, 0.0, 0.0, 0.0, 0.02, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0],
     ]
 
-    static func distance(_ live: [Double], to chordName: String) -> Double {
+    /// Initialize an instance of the canonical chroma template library.
+    public init() {}
+
+    /// Compute Euclidean distance between a live chroma vector and a template for a named chord.
+    public func distance(_ live: [Double], to chordName: String) -> Double {
         guard let refVector = vectors[chordName] else {
             return Double.infinity
         }
@@ -147,5 +153,10 @@ enum ReferenceChromaLibrary {
             sum += diff * diff
         }
         return sqrt(sum)
+    }
+
+    /// All chord names for which this library has templates.
+    public var availableChordNames: [String] {
+        Array(vectors.keys)
     }
 }

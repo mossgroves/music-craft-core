@@ -1,10 +1,10 @@
 import Accelerate
 import Foundation
 
-struct DSPUtilities {
+public struct DSPUtilities {
     /// Create a Hann window for spectral analysis.
     /// Window length must match FFT size for proper scaling.
-    static func hannWindow(length: Int) -> [Float] {
+    public static func hannWindow(length: Int) -> [Float] {
         var window = [Float](repeating: 0, count: length)
         vDSP_hann_window(&window, vDSP_Length(length), Int32(vDSP_HANN_NORM))
         return window
@@ -12,26 +12,26 @@ struct DSPUtilities {
 
     /// Create a Blackman window for spectral analysis.
     /// Provides ~58 dB sidelobe suppression, superior to Hann for chord detection.
-    static func blackmanWindow(length: Int) -> [Float] {
+    public static func blackmanWindow(length: Int) -> [Float] {
         var window = [Float](repeating: 0, count: length)
         vDSP_blkman_window(&window, vDSP_Length(length), 0)
         return window
     }
 
     /// Apply a window to audio samples in-place.
-    static func applyWindow(_ window: [Float], to samples: inout [Float]) {
+    public static func applyWindow(_ window: [Float], to samples: inout [Float]) {
         let count = min(window.count, samples.count)
         vDSP_vmul(samples, 1, window, 1, &samples, 1, vDSP_Length(count))
     }
 
     /// Compute log2 of the smallest power of 2 >= length (for FFT setup).
-    static func log2Ceil(_ length: Int) -> UInt {
+    public static func log2Ceil(_ length: Int) -> UInt {
         guard length > 0 else { return 0 }
         return UInt(ceil(log2(Double(length))))
     }
 }
 
-class ChromaExtractor {
+public class ChromaExtractor {
     private let fftSetup: OpaquePointer
     private let log2n: UInt
     private let halfN: Int
@@ -42,11 +42,11 @@ class ChromaExtractor {
     private var magnitudes: [Float]
     private let window: [Float]
 
-    var noiseBaseline: [Double]?
+    public var noiseBaseline: [Double]?
     private var calibrationFrames: [[Double]] = []
     private let calibrationFrameCount = 10
 
-    init(bufferSize: Int = 2048, sampleRate: Double = 44100) {
+    public init(bufferSize: Int = 2048, sampleRate: Double = 44100) {
         self.sampleRate = sampleRate
         self.log2n = DSPUtilities.log2Ceil(bufferSize)
         self.halfN = bufferSize / 2
@@ -69,7 +69,7 @@ class ChromaExtractor {
 
     /// Extract chroma vector from audio buffer.
     /// Performs FFT, maps to pitch classes with 1/octave weighting, subtracts noise baseline.
-    func extractChroma(buffer: UnsafePointer<Float>, count: Int) -> [Double] {
+    public func extractChroma(buffer: UnsafePointer<Float>, count: Int) -> [Double] {
         let effectiveCount = min(count, windowedBuffer.count)
 
         // Apply window
@@ -146,7 +146,7 @@ class ChromaExtractor {
 
     /// Calibrate noise baseline from a frame.
     /// Accumulates frames until calibrationFrameCount is reached, then averages.
-    func calibrateNoiseBaseline(frame: [Double]) {
+    public func calibrateNoiseBaseline(frame: [Double]) {
         calibrationFrames.append(frame)
         if calibrationFrames.count >= calibrationFrameCount {
             var baseline = [Double](repeating: 0, count: 12)

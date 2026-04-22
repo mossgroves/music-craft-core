@@ -10,7 +10,7 @@ Privacy-first and security-first. Network and telemetry are allowed where they g
 
 Audio. Engine setup, adaptive noise gate, audio file reading.
 
-DSP. FFT-based chroma, YIN pitch, HCDF, tempo estimator, onset detector.
+DSP. Public algorithm primitives (FFT, Hann/Blackman windows, YIN pitch detection, chroma extraction, noise baseline) plus a ChromaTemplateLibrary protocol for pluggable chord template matching. Ships CanonicalChromaLibrary as a default implementation using 120 theoretical templates (12 roots × 10 qualities). Consumer apps can provide their own conforming library when they have recording-derived training data.
 
 ChordDetection. Hybrid classifier pipeline with CoreML classifier, interval detector, and classifier-plus-interval agreement.
 
@@ -23,12 +23,12 @@ AnalysisPipeline. AudioExtractor for offline fragment analysis that returns chor
 Add to your Package.swift:
 
 ```swift
-.package(url: "https://github.com/mossgroves/music-craft-core.git", from: "0.0.4")
+.package(url: "https://github.com/mossgroves/music-craft-core.git", from: "0.0.5")
 ```
 
 ## Status
 
-Version 0.0.4. DSP subsystem complete with pure algorithm implementations: PitchDetector (YIN with confidence-weighted 3-frame median filter), ReferenceChromaLibrary (98 chord chroma templates), FFT wrapper with Hann/Blackman windowing, chroma extraction with octave weighting (bass-prominent), and noise baseline calibration with floor protection. MusicTheory subsystem complete with core primitives (NoteName, Chord, ChordQuality, Note, MusicalKey), diatonic spelling (SpelledNote, LetterName, Accidental, DiatonicChordGenerator), transposition utilities (Transposer), and music theory reference data (music_theory.json). ChordDetection (CoreML-based classifier) and AnalysisPipeline (high-level orchestration) remain pending and will land in subsequent 0.0.x releases, with 0.1.0 tagged once the full migration from Cantus completes.
+Version 0.0.5. DSP subsystem now publicly consumable with injectable ChromaTemplateLibrary protocol. Earlier 0.0.4 release shipped the DSP algorithms but declared them internal; 0.0.5 corrects the access modifiers. CanonicalChromaLibrary is the default implementation using 120 theoretical templates (12 roots × 10 qualities). Music theory primitives remain at 0.0.3 state. ChordDetection, AnalysisPipeline, and Audio subsystems remain pending extraction and will land in subsequent releases, with 0.1.0 tagged once the full migration from Cantus completes.
 
 ## License
 

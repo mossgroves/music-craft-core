@@ -10,11 +10,11 @@ import Foundation
 ///   EXCEPT for octave jumps (12 ±0.5 or 24 ±0.5 semitones) which are fundamental↔harmonic oscillation.
 ///   Same pattern as the mode stickiness octave jump exemption in AudioEngine.
 /// - Confidence-weighted median: high-confidence frames dominate over low-confidence decay frames
-final class PitchDetector: @unchecked Sendable {
-    struct Result {
-        let frequency: Double
-        let confidence: Double // 0.0–1.0
-        let note: Note?
+public final class PitchDetector: @unchecked Sendable {
+    public struct Result {
+        public let frequency: Double
+        public let confidence: Double // 0.0–1.0
+        public let note: Note?
     }
 
     private let sampleRate: Double
@@ -37,7 +37,7 @@ final class PitchDetector: @unchecked Sendable {
     /// When true, bypasses the 3-frame confidence-weighted median filter and returns
     /// raw YIN pitch directly. Used in Notes mode for immediate arpeggio response.
     /// Chord mode and Tuner mode keep median filtering for stability.
-    var bypassMedianFilter: Bool = false
+    public var bypassMedianFilter: Bool = false
 
     // Consecutive unpitched frame counter for silence detection.
     // After 3+ unpitched frames, the median filter is cleared to prevent
@@ -45,7 +45,7 @@ final class PitchDetector: @unchecked Sendable {
     private var consecutiveUnpitchedFrames = 0
     private let unpitchedThresholdForClear = 3
 
-    init(sampleRate: Double = 44100, bufferSize: Int = 8192, threshold: Double = 0.15) {
+    public init(sampleRate: Double = 44100, bufferSize: Int = 8192, threshold: Double = 0.15) {
         self.sampleRate = sampleRate
         self.bufferSize = bufferSize
         self.threshold = threshold
@@ -64,7 +64,7 @@ final class PitchDetector: @unchecked Sendable {
     /// Detect pitch from a buffer of audio samples.
     /// Includes pitch jump detection and silence clearing to prevent stuck-state
     /// when transitioning between notes.
-    func detectPitch(buffer: UnsafePointer<Float>, count: Int) -> Result? {
+    public func detectPitch(buffer: UnsafePointer<Float>, count: Int) -> Result? {
         let effectiveCount = min(count, bufferSize)
         let halfBuffer = effectiveCount / 2
 
@@ -184,7 +184,7 @@ final class PitchDetector: @unchecked Sendable {
     }
 
     /// Reset pitch smoothing state. Called when listening starts/stops or mode changes.
-    func reset() {
+    public func reset() {
         recentFrequencies.removeAll()
         consecutiveUnpitchedFrames = 0
     }

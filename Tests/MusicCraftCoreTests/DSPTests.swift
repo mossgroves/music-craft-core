@@ -186,29 +186,33 @@ final class DSPTests: XCTestCase {
         XCTAssertEqual(maxChroma, 1.0, accuracy: 0.01, "Chroma should be normalized to 1.0 max")
     }
 
-    // MARK: - ReferenceChromaLibrary Tests
+    // MARK: - CanonicalChromaLibrary Tests
 
-    func testReferenceChromaLibraryCount() {
-        let count = ReferenceChromaLibrary.vectors.count
-        XCTAssertGreaterThanOrEqual(count, 98, "Library should contain at least 98 chord templates")
+    func testCanonicalChromaLibraryCount() {
+        let library = CanonicalChromaLibrary()
+        let count = library.availableChordNames.count
+        XCTAssertGreaterThanOrEqual(count, 120, "Library should contain at least 120 chord templates")
     }
 
-    func testReferenceChromaLibraryDistanceFunction() {
+    func testCanonicalChromaLibraryDistanceFunction() {
+        let library = CanonicalChromaLibrary()
         // Distance to C major should be small
         let cMajorChroma: [Double] = [1.0, 0.0, 0.1, 0.0, 0.05, 0.0, 0.02, 0.0, 0.01, 0.0, 0.0, 0.0]
-        let distanceToC = ReferenceChromaLibrary.distance(cMajorChroma, to: "C")
+        let distanceToC = library.distance(cMajorChroma, to: "C")
         XCTAssertLessThan(distanceToC, 0.2)
 
         // Distance to a different quality should be larger
-        let distanceToDim = ReferenceChromaLibrary.distance(cMajorChroma, to: "Cdim")
+        let distanceToDim = library.distance(cMajorChroma, to: "Cdim")
         XCTAssertGreaterThan(distanceToDim, distanceToC)
     }
 
-    func testReferenceChromaLibraryContainsAllRoots() {
+    func testCanonicalChromaLibraryContainsAllRoots() {
+        let library = CanonicalChromaLibrary()
+        let availableNames = library.availableChordNames
         let roots = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
         for root in roots {
-            XCTAssertTrue(ReferenceChromaLibrary.vectors[root] != nil, "Library should contain \(root) major")
-            XCTAssertTrue(ReferenceChromaLibrary.vectors[root + "m"] != nil, "Library should contain \(root) minor")
+            XCTAssertTrue(availableNames.contains(root), "Library should contain \(root) major")
+            XCTAssertTrue(availableNames.contains(root + "m"), "Library should contain \(root) minor")
         }
     }
 
