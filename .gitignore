@@ -1,0 +1,15 @@
+# Xcode
+.DS_Store
+xcuserdata/
+*.xcworkspace/
+DerivedData/
+*.pbxproj
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Misc
+*.o
+*.swiftdeps
