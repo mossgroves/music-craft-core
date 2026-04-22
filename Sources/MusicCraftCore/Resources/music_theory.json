@@ -1,0 +1,532 @@
+{
+  "scales": {
+    "major": {
+      "intervals": [
+        0,
+        2,
+        4,
+        5,
+        7,
+        9,
+        11
+      ],
+      "degree_names": [
+        "tonic",
+        "supertonic",
+        "mediant",
+        "subdominant",
+        "dominant",
+        "submediant",
+        "leading tone"
+      ],
+      "degree_numerals": [
+        "I",
+        "ii",
+        "iii",
+        "IV",
+        "V",
+        "vi",
+        "vii°"
+      ],
+      "degree_qualities": [
+        "major",
+        "minor",
+        "minor",
+        "major",
+        "major",
+        "minor",
+        "diminished"
+      ],
+      "modes": {
+        "ionian": {
+          "start_degree": 1,
+          "character": "bright, happy, resolved"
+        },
+        "dorian": {
+          "start_degree": 2,
+          "character": "minor with a bright 6th, jazzy"
+        },
+        "phrygian": {
+          "start_degree": 3,
+          "character": "dark, Spanish, exotic"
+        },
+        "lydian": {
+          "start_degree": 4,
+          "character": "dreamy, floating, ethereal"
+        },
+        "mixolydian": {
+          "start_degree": 5,
+          "character": "bluesy major, unresolved"
+        },
+        "aeolian": {
+          "start_degree": 6,
+          "character": "natural minor, melancholic"
+        },
+        "locrian": {
+          "start_degree": 7,
+          "character": "unstable, diminished, rarely used"
+        }
+      }
+    },
+    "natural_minor": {
+      "intervals": [
+        0,
+        2,
+        3,
+        5,
+        7,
+        8,
+        10
+      ],
+      "degree_names": [
+        "tonic",
+        "supertonic",
+        "mediant",
+        "subdominant",
+        "dominant",
+        "submediant",
+        "subtonic"
+      ],
+      "degree_numerals": [
+        "i",
+        "ii°",
+        "III",
+        "iv",
+        "v",
+        "VI",
+        "VII"
+      ],
+      "degree_qualities": [
+        "minor",
+        "diminished",
+        "major",
+        "minor",
+        "minor",
+        "major",
+        "major"
+      ]
+    },
+    "harmonic_minor": {
+      "intervals": [
+        0,
+        2,
+        3,
+        5,
+        7,
+        8,
+        11
+      ],
+      "degree_names": [
+        "tonic",
+        "supertonic",
+        "mediant",
+        "subdominant",
+        "dominant",
+        "submediant",
+        "leading tone"
+      ],
+      "degree_numerals": [
+        "i",
+        "ii°",
+        "III+",
+        "iv",
+        "V",
+        "VI",
+        "vii°"
+      ],
+      "degree_qualities": [
+        "minor",
+        "diminished",
+        "augmented",
+        "minor",
+        "major",
+        "major",
+        "diminished"
+      ],
+      "note": "Raised 7th creates leading tone and dominant V chord"
+    },
+    "melodic_minor": {
+      "intervals_ascending": [
+        0,
+        2,
+        3,
+        5,
+        7,
+        9,
+        11
+      ],
+      "intervals_descending": [
+        0,
+        2,
+        3,
+        5,
+        7,
+        8,
+        10
+      ],
+      "note": "Ascending raises 6th and 7th; descending reverts to natural minor"
+    },
+    "pentatonic_major": {
+      "intervals": [
+        0,
+        2,
+        4,
+        7,
+        9
+      ],
+      "character": "Open, universal, folk and rock foundation"
+    },
+    "pentatonic_minor": {
+      "intervals": [
+        0,
+        3,
+        5,
+        7,
+        10
+      ],
+      "character": "Blues and rock foundation, works over almost anything"
+    },
+    "blues": {
+      "intervals": [
+        0,
+        3,
+        5,
+        6,
+        7,
+        10
+      ],
+      "character": "Minor pentatonic plus the blue note (b5)"
+    }
+  },
+  "intervals": {
+    "unison": {
+      "semitones": 0,
+      "abbreviation": "P1"
+    },
+    "minor_second": {
+      "semitones": 1,
+      "abbreviation": "m2",
+      "character": "tense, dissonant"
+    },
+    "major_second": {
+      "semitones": 2,
+      "abbreviation": "M2",
+      "character": "open, neutral"
+    },
+    "minor_third": {
+      "semitones": 3,
+      "abbreviation": "m3",
+      "character": "sad, dark"
+    },
+    "major_third": {
+      "semitones": 4,
+      "abbreviation": "M3",
+      "character": "happy, bright"
+    },
+    "perfect_fourth": {
+      "semitones": 5,
+      "abbreviation": "P4",
+      "character": "open, hymnlike"
+    },
+    "tritone": {
+      "semitones": 6,
+      "abbreviation": "TT",
+      "character": "tense, unstable, devil's interval"
+    },
+    "perfect_fifth": {
+      "semitones": 7,
+      "abbreviation": "P5",
+      "character": "strong, stable, power chord"
+    },
+    "minor_sixth": {
+      "semitones": 8,
+      "abbreviation": "m6",
+      "character": "bittersweet"
+    },
+    "major_sixth": {
+      "semitones": 9,
+      "abbreviation": "M6",
+      "character": "warm, gentle"
+    },
+    "minor_seventh": {
+      "semitones": 10,
+      "abbreviation": "m7",
+      "character": "bluesy, unresolved"
+    },
+    "major_seventh": {
+      "semitones": 11,
+      "abbreviation": "M7",
+      "character": "dreamy, jazzy, almost dissonant"
+    },
+    "octave": {
+      "semitones": 12,
+      "abbreviation": "P8"
+    }
+  },
+  "chord_formulas": {
+    "major": {
+      "intervals": [
+        0,
+        4,
+        7
+      ],
+      "symbol": "",
+      "character": "happy, bright, resolved"
+    },
+    "minor": {
+      "intervals": [
+        0,
+        3,
+        7
+      ],
+      "symbol": "m",
+      "character": "sad, dark, introspective"
+    },
+    "diminished": {
+      "intervals": [
+        0,
+        3,
+        6
+      ],
+      "symbol": "dim",
+      "character": "tense, unstable"
+    },
+    "augmented": {
+      "intervals": [
+        0,
+        4,
+        8
+      ],
+      "symbol": "aug",
+      "character": "dreamy, unsettled"
+    },
+    "sus2": {
+      "intervals": [
+        0,
+        2,
+        7
+      ],
+      "symbol": "sus2",
+      "character": "open, ambiguous"
+    },
+    "sus4": {
+      "intervals": [
+        0,
+        5,
+        7
+      ],
+      "symbol": "sus4",
+      "character": "suspended, wants to resolve"
+    },
+    "dom7": {
+      "intervals": [
+        0,
+        4,
+        7,
+        10
+      ],
+      "symbol": "7",
+      "character": "bluesy, wants to resolve down a fifth"
+    },
+    "maj7": {
+      "intervals": [
+        0,
+        4,
+        7,
+        11
+      ],
+      "symbol": "maj7",
+      "character": "dreamy, sophisticated, jazzy"
+    },
+    "min7": {
+      "intervals": [
+        0,
+        3,
+        7,
+        10
+      ],
+      "symbol": "m7",
+      "character": "mellow, smooth"
+    },
+    "min_maj7": {
+      "intervals": [
+        0,
+        3,
+        7,
+        11
+      ],
+      "symbol": "m(maj7)",
+      "character": "dark, cinematic tension"
+    },
+    "dim7": {
+      "intervals": [
+        0,
+        3,
+        6,
+        9
+      ],
+      "symbol": "dim7",
+      "character": "maximum tension, symmetric"
+    },
+    "half_dim7": {
+      "intervals": [
+        0,
+        3,
+        6,
+        10
+      ],
+      "symbol": "m7b5",
+      "character": "jazz ii chord in minor keys"
+    },
+    "add9": {
+      "intervals": [
+        0,
+        4,
+        7,
+        14
+      ],
+      "symbol": "add9",
+      "character": "bright, open, singer-songwriter staple"
+    },
+    "dom9": {
+      "intervals": [
+        0,
+        4,
+        7,
+        10,
+        14
+      ],
+      "symbol": "9",
+      "character": "rich, funky"
+    }
+  },
+  "circle_of_fifths": {
+    "order": [
+      "C",
+      "G",
+      "D",
+      "A",
+      "E",
+      "B",
+      "F#/Gb",
+      "Db",
+      "Ab",
+      "Eb",
+      "Bb",
+      "F"
+    ],
+    "sharps_by_key": {
+      "C": 0,
+      "G": 1,
+      "D": 2,
+      "A": 3,
+      "E": 4,
+      "B": 5,
+      "F#": 6
+    },
+    "flats_by_key": {
+      "C": 0,
+      "F": 1,
+      "Bb": 2,
+      "Eb": 3,
+      "Ab": 4,
+      "Db": 5,
+      "Gb": 6
+    },
+    "relative_minors": {
+      "C": "Am",
+      "G": "Em",
+      "D": "Bm",
+      "A": "F#m",
+      "E": "C#m",
+      "B": "G#m",
+      "F#": "D#m",
+      "Db": "Bbm",
+      "Ab": "Fm",
+      "Eb": "Cm",
+      "Bb": "Gm",
+      "F": "Dm"
+    }
+  },
+  "common_progressions": {
+    "singer_songwriter": [
+      {
+        "numerals": "I-V-vi-IV",
+        "name": "The Four Chords",
+        "example_key_D": "D-A-Bm-G",
+        "character": "Anthemic, universally appealing"
+      },
+      {
+        "numerals": "I-IV-V-I",
+        "name": "Classic resolution",
+        "example_key_D": "D-G-A-D",
+        "character": "Simple, strong, folk and country"
+      },
+      {
+        "numerals": "vi-IV-I-V",
+        "name": "Sensitive",
+        "example_key_D": "Bm-G-D-A",
+        "character": "Emotional, starts dark then lifts"
+      },
+      {
+        "numerals": "I-vi-IV-V",
+        "name": "50s / doo-wop",
+        "example_key_D": "D-Bm-G-A",
+        "character": "Nostalgic, warm"
+      },
+      {
+        "numerals": "ii-V-I",
+        "name": "Jazz resolution",
+        "example_key_D": "Em-A-D",
+        "character": "Smooth, sophisticated"
+      },
+      {
+        "numerals": "I-IV-vi-V",
+        "name": "Pop standard",
+        "example_key_D": "D-G-Bm-A",
+        "character": "Uplifting, forward motion"
+      }
+    ],
+    "blues": [
+      {
+        "numerals": "I7-I7-I7-I7-IV7-IV7-I7-I7-V7-IV7-I7-V7",
+        "name": "12-bar blues",
+        "character": "Foundation of blues, rock, and jazz"
+      },
+      {
+        "numerals": "I7-IV7-I7-V7",
+        "name": "Quick change blues",
+        "character": "IV in bar 2 for urgency"
+      }
+    ],
+    "folk": [
+      {
+        "numerals": "I-IV-I-V",
+        "name": "Mountain modal",
+        "character": "Appalachian, modal feel"
+      },
+      {
+        "numerals": "i-VII-VI-VII",
+        "name": "Aeolian vamp",
+        "character": "Minor key folk, hypnotic"
+      },
+      {
+        "numerals": "I-V-I-IV-I-V-I",
+        "name": "Fiddle tune",
+        "character": "Call and response, dance"
+      }
+    ]
+  },
+  "key_detection_rules": {
+    "description": "Heuristics for identifying likely key from a sequence of chords",
+    "rules": [
+      "Major chord appearing most frequently is likely I or IV or V",
+      "If both a major chord and its relative minor appear, check which feels like home",
+      "A dominant 7th chord strongly suggests V7 resolving to the key a fifth below",
+      "The chord the progression resolves to (especially at phrase endings) is likely I",
+      "vi-IV-I-V and I-V-vi-IV both suggest the major chord as I",
+      "A minor chord followed by its relative major suggests the major key",
+      "Three major chords a fifth apart (e.g., G-C-D) strongly suggest the middle one is I"
+    ]
+  }
+}

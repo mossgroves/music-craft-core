@@ -23,12 +23,12 @@ AnalysisPipeline. AudioExtractor for offline fragment analysis that returns chor
 Add to your Package.swift:
 
 ```swift
-.package(url: "https://github.com/mossgroves/music-craft-core.git", from: "0.1.0")
+.package(url: "https://github.com/mossgroves/music-craft-core.git", from: "0.0.2")
 ```
 
 ## Status
 
-Version 0.0.1. Skeleton only. Code migration from mossgroves/cantus is underway and will land in 0.1.0.
+Version 0.0.2. MusicTheory subsystem has landed with core primitives (NoteName, Chord, ChordQuality, Note, MusicalKey), diatonic spelling (SpelledNote, LetterName, Accidental, DiatonicChordGenerator), transposition utilities (Transposer), and music theory reference data (music_theory.json). Audio, DSP, ChordDetection, and AnalysisPipeline remain pending and will land in subsequent 0.0.x releases, with 0.1.0 tagged once the full migration from Cantus completes.
 
 ## License
 
