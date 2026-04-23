@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.6.1] - 2026-04-22
+
+### Fixed
+- Explicit public initializers added to all public Result and Peak structs in ChordDetection subsystem. Compiler-synthesized memberwise initializers were not promoted to public when accessed from external modules, blocking consumer apps from constructing Result types for adaptation or testing. Affected types: `ChordDetector.Result`, `IntervalDetector.Result`, `IntervalDetector.Peak`. Issue surfaced by Cantus's 0.0.6 adoption attempt (2026-04-22).
+
+### Added
+- PublicAPITests extended with direct Result and Peak construction tests via public initializers. Three new tests verify external-module accessibility and serve as regression anchors: `testChordDetectorResultPublicInit`, `testIntervalDetectorPeakPublicInit`, `testIntervalDetectorResultPublicInit`.
+
 ## [0.0.5] - 2026-04-22
 
 ### Added

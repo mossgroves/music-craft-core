@@ -30,6 +30,12 @@ public final class IntervalDetector {
     public struct Peak {
         public let note: NoteName
         public let energy: Double
+
+        /// Public initializer to enable construction from external modules.
+        public init(note: NoteName, energy: Double) {
+            self.note = note
+            self.energy = energy
+        }
     }
 
     public struct Result {
@@ -37,6 +43,14 @@ public final class IntervalDetector {
         public let quality: ChordQuality
         public let confidence: Double
         public let peaks: [Peak]
+
+        /// Public initializer to enable construction from external modules.
+        public init(root: NoteName, quality: ChordQuality, confidence: Double, peaks: [Peak]) {
+            self.root = root
+            self.quality = quality
+            self.confidence = confidence
+            self.peaks = peaks
+        }
     }
 
     /// Chord formulas ordered by priority (simplest/most common first).

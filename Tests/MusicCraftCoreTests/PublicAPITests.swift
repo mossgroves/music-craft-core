@@ -272,6 +272,55 @@ final class PublicAPITests: XCTestCase {
         XCTAssertNotNil(result)
     }
 
+    // MARK: - ChordDetector.Result Public Initializer
+
+    func testChordDetectorResultPublicInit() {
+        // Verify that Result can be constructed from external module via public init
+        let chord = Chord(root: .C, quality: .major)
+        let chroma = [1.0, 0.0, 0.1, 0.0, 0.8, 0.0, 0.05, 0.6, 0.0, 0.0, 0.0, 0.0]
+
+        // This should compile and run without errors
+        let result = ChordDetector.Result(chord: chord, chroma: chroma)
+
+        XCTAssertEqual(result.chord.root, .C)
+        XCTAssertEqual(result.chord.quality, .major)
+        XCTAssertEqual(result.chroma.count, 12)
+        XCTAssertEqual(result.chroma[0], 1.0)
+    }
+
+    // MARK: - IntervalDetector.Result and Peak Public Initializers
+
+    func testIntervalDetectorPeakPublicInit() {
+        // Verify that Peak can be constructed from external module via public init
+        let peak = IntervalDetector.Peak(note: .C, energy: 0.95)
+
+        XCTAssertEqual(peak.note, .C)
+        XCTAssertEqual(peak.energy, 0.95)
+    }
+
+    func testIntervalDetectorResultPublicInit() {
+        // Verify that Result can be constructed from external module via public init
+        let peak1 = IntervalDetector.Peak(note: .C, energy: 1.0)
+        let peak2 = IntervalDetector.Peak(note: .E, energy: 0.8)
+        let peak3 = IntervalDetector.Peak(note: .G, energy: 0.6)
+        let peaks = [peak1, peak2, peak3]
+
+        // This should compile and run without errors
+        let result = IntervalDetector.Result(
+            root: .C,
+            quality: .major,
+            confidence: 0.90,
+            peaks: peaks
+        )
+
+        XCTAssertEqual(result.root, .C)
+        XCTAssertEqual(result.quality, .major)
+        XCTAssertEqual(result.confidence, 0.90)
+        XCTAssertEqual(result.peaks.count, 3)
+        XCTAssertEqual(result.peaks[0].note, .C)
+        XCTAssertEqual(result.peaks[0].energy, 1.0)
+    }
+
     // MARK: - Stub Classifier Provider
 
     private class StubClassifierProvider: ChordClassifierProvider {

@@ -18,6 +18,12 @@ public final class ChordDetector: @unchecked Sendable {
     public struct Result {
         public let chord: Chord
         public let chroma: [Double] // 12-element chroma vector
+
+        /// Public initializer to enable construction from external modules.
+        public init(chord: Chord, chroma: [Double]) {
+            self.chord = chord
+            self.chroma = chroma
+        }
     }
 
     private let sampleRate: Double
