@@ -15,6 +15,14 @@ MusicCraftCore (MCC) is a shared DSP, music theory data, and audio analysis libr
 3. `Package.swift` — Swift Package manifest and dependencies
 4. Sources/MusicCraftCore/DSP/ — All DSP subsystem code and protocols
 
+Portfolio standards from mossgroves/lore:
+
+foundation/MOSSGROVE-LORE.md for development standards, voice, quality checklists.
+
+foundation/MOSSGROVE-FORGE.md for lifecycle stages and release readiness.
+
+foundation/MOSSGROVE-GROUNDING.md for grounding and assumption discipline — labeling inference, verifying claims, auditing peer outputs.
+
 ## Current Development Stage
 
 **Completed: Music Theory (0.0.2–0.0.3) and DSP (0.0.4–0.0.5)**
@@ -43,6 +51,20 @@ Similar to Cantus/CLAUDE.md:
 - File deletions or renames
 - Package.swift version or tag operations
 - Any open questions that Chris has not resolved
+
+## Grounding and Assumption Discipline
+
+MCC follows the portfolio-wide grounding protocol in mossgroves/lore foundation/MOSSGROVE-GROUNDING.md. Every non-trivial claim Claude makes — about MCC code, public API shape, shipped versions, or consumer-project (Sanctuary, Guitar Atlas) state — anchors to a file read, git log output, or tool result produced in the current session. Claims that are not grounded are labeled as inference.
+
+MCC-specific applications:
+
+1. When drafting a release spec or design document, include a hallucination audit at the end listing every non-trivial claim and the specific file, line, or command that verified it. Unverified claims are listed separately with the inference labeled.
+2. Before claiming what a public API does or what its contract is, read the current source file and the relevant tests. Tests are often the most precise source of truth for intended behavior.
+3. When describing consumer-project (Sanctuary, Guitar Atlas) state — what version they're on, what they use, what they need — verify against their repo or their outbox in mossgroves-claude-workspace. Do not assume consumer state from memory.
+4. When reviewing a design spec or PR, distinguish the parts of the review that are grounded in file reads from the parts that are design opinion.
+5. If an MCC document (CLAUDE.md, CHANGELOG, release notes) conflicts with observed state in the source or the test suite, surface the conflict rather than silently trusting the document. Reconcile by updating whichever side is wrong.
+
+This discipline is cumulative with MCC's autonomy classification: every public API change or version-affecting change labels green/yellow/red, and every non-trivial claim supporting that classification is grounded or labeled as inference.
 
 ## Architecture Decisions
 
