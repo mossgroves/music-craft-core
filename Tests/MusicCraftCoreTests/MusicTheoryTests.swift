@@ -228,6 +228,90 @@ final class MusicTheoryTests: XCTestCase {
         XCTAssertEqual(cMajor.romanNumeral(for: aChord), "vi")
     }
 
+    func testMusicalKeyHashable() {
+        let k1 = MusicalKey(root: .C, mode: .major)
+        let k2 = MusicalKey(root: .C, mode: .major)
+        let k3 = MusicalKey(root: .C, mode: .minor)
+
+        var set = Set<MusicalKey>()
+        set.insert(k1)
+        set.insert(k2)
+        XCTAssertEqual(set.count, 1)
+
+        set.insert(k3)
+        XCTAssertEqual(set.count, 2)
+    }
+
+    func testMusicalKeyHashableInDictionary() {
+        let cMajor = MusicalKey(root: .C, mode: .major)
+        let cMinor = MusicalKey(root: .C, mode: .minor)
+
+        var dict: [MusicalKey: Int] = [:]
+        dict[cMajor] = 1
+        dict[cMinor] = 2
+
+        XCTAssertEqual(dict[cMajor], 1)
+        XCTAssertEqual(dict[cMinor], 2)
+    }
+
+    func testMusicalKeySendableCompiles() {
+        let key = MusicalKey(root: .C, mode: .major)
+        Task {
+            let captured = key
+            _ = captured
+        }
+    }
+
+    func testRomanNumeralTypedConsistencyWithRomanNumeral() {
+        let cMajor = MusicalKey(root: .C, mode: .major)
+        let diatonicChords = [
+            Chord(root: .C, quality: .major),
+            Chord(root: .D, quality: .minor),
+            Chord(root: .E, quality: .minor),
+            Chord(root: .F, quality: .major),
+            Chord(root: .G, quality: .major),
+            Chord(root: .A, quality: .minor),
+            Chord(root: .B, quality: .diminished),
+        ]
+
+        for chord in diatonicChords {
+            let stringResult = cMajor.romanNumeral(for: chord)
+            let typedResult = cMajor.romanNumeralTyped(for: chord)
+
+            if let str = stringResult {
+                XCTAssertNotNil(typedResult)
+                XCTAssertEqual(typedResult?.displayString, str)
+            } else {
+                XCTAssertNil(typedResult)
+            }
+        }
+    }
+
+    func testRomanNumeralTypedConsistencyWithRomanNumeralMinor() {
+        let aMinor = MusicalKey(root: .A, mode: .minor)
+        let diatonicChords = [
+            Chord(root: .A, quality: .minor),
+            Chord(root: .B, quality: .diminished),
+            Chord(root: .C, quality: .major),
+            Chord(root: .D, quality: .minor),
+            Chord(root: .E, quality: .minor),
+            Chord(root: .F, quality: .major),
+            Chord(root: .G, quality: .major),
+        ]
+
+        for chord in diatonicChords {
+            let stringResult = aMinor.romanNumeral(for: chord)
+            let typedResult = aMinor.romanNumeralTyped(for: chord)
+
+            if let str = stringResult {
+                XCTAssertNotNil(typedResult)
+                XCTAssertEqual(typedResult?.displayString, str)
+            } else {
+                XCTAssertNil(typedResult)
+            }
+        }
+    }
+
     // MARK: - SpelledNote
 
     func testSpelledNoteDisplayString() {

@@ -321,6 +321,25 @@ final class PublicAPITests: XCTestCase {
         XCTAssertEqual(result.peaks[0].energy, 1.0)
     }
 
+    // MARK: - RomanNumeral Public API
+
+    func testRomanNumeralPublicInit() {
+        let roman = RomanNumeral(degree: .five, accidental: .natural, quality: .major)
+        XCTAssertEqual(roman.degree, .five)
+        XCTAssertEqual(roman.accidental, .natural)
+        XCTAssertEqual(roman.quality, .major)
+        XCTAssertEqual(roman.displayString, "V")
+    }
+
+    // MARK: - SongReference Public API
+
+    func testSongReferencePublicInit() {
+        let reference = SongReference(songTitle: "Let It Be", artist: "The Beatles", detail: "1970")
+        XCTAssertEqual(reference.songTitle, "Let It Be")
+        XCTAssertEqual(reference.artist, "The Beatles")
+        XCTAssertEqual(reference.detail, "1970")
+    }
+
     // MARK: - Stub Classifier Provider
 
     private class StubClassifierProvider: ChordClassifierProvider {
