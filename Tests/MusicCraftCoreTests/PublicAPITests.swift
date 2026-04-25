@@ -340,6 +340,68 @@ final class PublicAPITests: XCTestCase {
         XCTAssertEqual(reference.detail, "1970")
     }
 
+    // MARK: - ProgressionPattern Public API
+
+    func testProgressionPatternPublicInit() {
+        let numerals = [
+            RomanNumeral(degree: .one, quality: .major),
+            RomanNumeral(degree: .five, quality: .major),
+        ]
+        let examples = [SongReference(songTitle: "Test Song", artist: "Test Artist", detail: "2026")]
+        let pattern = ProgressionPattern(name: "Test Pattern", numerals: numerals, description: "A test pattern", songExamples: examples)
+
+        XCTAssertEqual(pattern.name, "Test Pattern")
+        XCTAssertEqual(pattern.numerals.count, 2)
+        XCTAssertEqual(pattern.description, "A test pattern")
+        XCTAssertEqual(pattern.songExamples.count, 1)
+    }
+
+    // MARK: - RecognizedPattern Public API
+
+    func testRecognizedPatternPublicAccess() {
+        let numerals = [RomanNumeral(degree: .one, quality: .major)]
+        let examples = [SongReference(songTitle: "Test", artist: "Test", detail: "2026")]
+        let pattern = ProgressionPattern(name: "Test", numerals: numerals, description: "Test", songExamples: examples)
+        let recognized = RecognizedPattern(pattern: pattern, matchType: .exact)
+
+        XCTAssertEqual(recognized.name, "Test")
+        XCTAssertEqual(recognized.description, "Test")
+        XCTAssertEqual(recognized.songExamples.count, 1)
+        XCTAssertEqual(recognized.matchType, .exact)
+        XCTAssertEqual(recognized.displayString, "I")
+    }
+
+    // MARK: - ProgressionAnalyzer Public API
+
+    func testProgressionAnalyzerInferKeyPublic() {
+        let chords = [
+            Chord(root: .C, quality: .major),
+            Chord(root: .C, quality: .major),
+            Chord(root: .G, quality: .major),
+            Chord(root: .C, quality: .major),
+        ]
+        let key = ProgressionAnalyzer.inferKey(from: chords)
+
+        XCTAssertNotNil(key)
+        XCTAssertEqual(key?.root, .C)
+        XCTAssertEqual(key?.mode, .major)
+    }
+
+    func testProgressionAnalyzerRecognizePatternPublic() {
+        let chords = [
+            Chord(root: .C, quality: .major),
+            Chord(root: .G, quality: .major),
+            Chord(root: .A, quality: .minor),
+            Chord(root: .F, quality: .major),
+        ]
+        let key = MusicalKey(root: .C, mode: .major)
+        let result = ProgressionAnalyzer.recognizePattern(progression: chords, in: key)
+
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.name, "Pop Anthem")
+        XCTAssertEqual(result?.matchType, .exact)
+    }
+
     // MARK: - Stub Classifier Provider
 
     private class StubClassifierProvider: ChordClassifierProvider {

@@ -1,7 +1,7 @@
 import Foundation
 
 /// The 12 chromatic notes (C through B, with sharps).
-public enum NoteName: Int, CaseIterable {
+public enum NoteName: Int, CaseIterable, Sendable {
     case C = 0, Cs, D, Ds, E, F, Fs, G, Gs, A, As, B
 
     /// Display name using sharp symbol (e.g., "C♯").
