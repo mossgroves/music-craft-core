@@ -8,20 +8,72 @@
 
 ## Next Up
 
-1. **Cantus 0.0.7 Adoption** — Cantus currently on 0.0.5, stable. 0.0.6 adoption attempt (2026-04-22) hit runtime crashes; root cause undiagnosed, work stashed. 0.0.7 adoption pending investigation of 0.0.6 root cause (calibration state parity question). Non-blocking; Cantus remains operational on 0.0.5.
+1. **0.0.8 AudioExtractor Implementation** — After design spec approved. Phased implementation using diagnosis-plan-execute pattern with intermediate fixture tests at highest-risk transitions.
 
-2. **Sanctuary 0.0.7 Adoption** — Sanctuary to adopt ProgressionAnalyzer and DSP subsystems on its own schedule. Non-blocking.
+2. **Sendable Audit on Legacy MusicTheory Types** — Audit all public MusicTheory types (Chord, ChordQuality, others) for Sendable conformance. Regression anchor: PublicAPITests.swift should verify all public types pass Sendable compile checks.
 
-3. **Sendable Audit** — Audit all public DSP types (FFTWrapper, window functions, ChromaExtractor) for Sendable conformance. Regression anchor: PublicAPITests.swift should verify all public types pass Sendable compile checks.
+3. **Merge release/0.0.7 into main on GitHub** — Currently main is ahead of release/0.0.7 (cross-project-log updates). Decide on merge strategy and execute (documented as open question in CODEX).
 
-4. **0.0.8 Spec Drafting** — Detailed design spec for AudioExtractor with AnalysisPipeline integration, contour output shape, state machine diagrams, and error handling strategy. Peer review with Chris before implementation begins.
+4. **MCC-CODEX.md and TASKS.md Alignment to Capability Areas** — This session's documentation pass completing governance bootstrap Phase 1.
 
 ## Backlog
 
-- **Pattern Library Extensibility (0.0.9+)** — User-contributed patterns and JSON-based pattern libraries. Deferred; static 15-pattern library ships with 0.0.7.
-- **Key Inference Weights Configuration (0.0.9+)** — Currently internal constants in ProgressionAnalyzer+KeyInference.swift. Deferred until a consumer requests configurable heuristic weights.
-- **Transposer Enharmonic Preference (1.0.0)** — User-configurable sharp/flat spelling. Currently fixed (C♯, F♯, G♯, A♯ preferred; D♭, E♭, A♭, B♭ for flats). Deferred to post-1.0.0.
-- **Audio Subsystem (deferred indefinitely)** — Engine setup, adaptive noise gate, audio file reading. Sanctuary uses AVFoundation directly per 2026-04-22. Will resurrect if consumer app need is confirmed.
+Organized by MIR Capability Area (see CODEX.md for complete roadmap and status definitions).
+
+### Tonal analysis
+
+- Modulation detection across a piece — deferred
+- Secondary dominants and full chromatic functional analysis — deferred
+
+### Pitch and monophonic analysis
+
+- (All planned items in this area are planned-for-0.0.8; none deferred to backlog)
+
+### Rhythm analysis
+
+- Beat tracking and tempo (BPM) estimation — designed; deferred. High-impact for Sanctuary; likely a 0.0.9 or 0.1.x release.
+- Downbeat detection — deferred
+- Meter / time signature inference — deferred
+- Spectral flux onset detection — designed; deferred (future MCC DSP enhancement beyond 0.0.8 energy-based onset)
+
+### Structure analysis
+
+- Section segmentation (verse / chorus / bridge boundaries) — designed; deferred until rhythm + tonal are stable. Likely post-0.1.0.
+- Repetition / motif detection — deferred
+
+### Timbral and spectral analysis
+
+- MFCCs (Mel-frequency cepstral coefficients) — designed; deferred. Foundation for vocal feature extraction and instrument classification.
+- Spectral centroid, rolloff, flatness — designed; deferred. Pair with MFCCs in a future spectral subsystem release.
+
+### Voice and vocal analysis
+
+- LyricsExtractor (lyric extraction wrapping Apple's Speech framework) — designed; deferred. Likely a 0.0.9 or 0.0.10 release. Wraps SFSpeechRecognizer (iOS 17+) or SpeechAnalyzer (iOS 26+) with timestamped word/phrase tokens aligned to MCC's chord/melody timeline.
+- Vocal range and tessitura — designed; deferred. Computed from F0 distribution.
+- Pitch stability over sustained notes — designed; deferred. Standard deviation of F0 within held notes.
+- Vibrato analysis: rate, extent, regularity — designed; deferred. Computed from F0 over time via autocorrelation or FFT of the F0 curve.
+- Voice type classification: tenor / baritone / bass / soprano / mezzo / alto — designed; deferred. Threshold-based initial implementation using vocal range, tessitura, and FHE thresholds. CoreML refinement later if accuracy warrants.
+- Vocal timbre features: spectral brightness, breathiness (spectral flatness), warmth — deferred. Depend on MFCC infrastructure.
+- Onset density and phrase length distribution — deferred. Useful proxies for breath control and vocal articulation.
+
+### Music theory primitives
+
+- Tuning value type with preset library (Standard, Drop D, DADGAD, etc.) — deferred. Lifted when a non-Cantus consumer needs guitar-aware fretboard logic.
+- TunerStringMatcher (nearest-string + cents-offset given a Tuning) — deferred. Lifts with Tuning.
+- Pattern library extensibility (0.0.9+) — User-contributed patterns and JSON-based pattern libraries. Static 15-pattern library ships with 0.0.7.
+- Key inference weights configuration (0.0.9+) — Currently internal constants. Deferred until a consumer requests configurable heuristic weights.
+- Transposer enharmonic preference (1.0.0) — User-configurable sharp/flat spelling. Currently fixed. Deferred to post-1.0.0.
+
+### Higher-order analysis output
+
+- AnalysisResult JSON-shaped bundled record — designed; deferred. Probable 0.0.9 or 0.1.0 capability.
+
+### Consumer adoption and coordination
+
+- Cantus 0.0.7 adoption — Cantus currently on 0.0.5, stable. 0.0.6 adoption attempt hit runtime crashes; work stashed for forensic review. Non-blocking; will attempt 0.0.7 adoption separately on Cantus's schedule.
+- Sanctuary 0.0.7 adoption — Yellow slice; non-blocking. Phase C slices 9–12 (AudioExtractor integration) remain blocked on 0.0.8.
+- Forensic review of Cantus 0.0.6 adoption stash — Root cause of runtime crashes not yet diagnosed. Lower priority than pushing 0.0.8 forward.
+- 0.1.0 tag after 0.0.8 ships clean — Mark extraction phase complete and readiness for first 1.x pre-release cycle.
 
 ## Recently Shipped
 
@@ -34,6 +86,8 @@
 **0.0.5 (2026-04-22)** — All DSP types made public: PitchDetector, ChromaExtractor, CanonicalChromaLibrary, window functions, FFT wrapper, DSPUtilities. ChromaTemplateLibrary protocol for dependency injection. PublicAPITests suite (12 tests) as regression anchor. Cantus adopted 0.0.5 successfully (commit fa97618).
 
 ## Process Notes
+
+**Backlog Organization** — Backlog items are now organized by Capability Area for alignment with MCC-CODEX.md. This structure makes roadmap visibility clear: items under a given area can be grouped into a release, and the status legend (shipped/planned/designed/deferred/out-of-scope) distinguishes where each lives in MCC's evolution. For detailed descriptions and rationale, see CODEX.md Capability Areas section.
 
 **Diagnosis-Plan-Execute Pattern** — Validated by 0.0.7 delivery. For non-mechanical extractions (state machines, complex composition), this three-phase approach prevents unforeseen friction:
 1. **Diagnosis:** Understand the feature in its original context, document assumptions, identify risk areas.
@@ -58,4 +112,4 @@ This replaces the earlier "extract then integrate" loop with upfront design. Cos
 
 ---
 
-**Last Updated:** 2026-04-24 — Governance bootstrap Phase 1 in progress. Pending Phase 1 checkpoint approval before Steps 3–8 (TECHNICAL-ARCHITECTURE, CLAUDE.md update, spec/ADR backfilling, workspace coordination).
+**Last Updated:** 2026-04-24 — Governance bootstrap Phase 1 complete. MCC-CODEX.md and TASKS.md aligned to Capability Areas; backlog reorganized for roadmap visibility. Ready for 0.0.8 AudioExtractor design phase and Phase 2+ (TECHNICAL-ARCHITECTURE, CLAUDE.md update, spec/ADR backfilling).
