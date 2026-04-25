@@ -2,9 +2,7 @@
 
 ## Active
 
-**0.0.8 AudioExtractor Design Phase** — Scoping AnalysisPipeline subsystem with stateless offline fragment analysis (chord progression, key, tempo, contour from audio URL). Using diagnosis-plan-execute pattern: design spec → peer review → phased implementation with intermediate fixture test. Contour API shape includes onset time, duration, Parsons code, and signed-semitone steps per 2026-04-23 decision. Sanctuary confirmed it uses AVFoundation directly, so contour output is the primary integration surface.
-
-**Governance Bootstrap** — Creating MCC-CODEX.md and TASKS.md (Phase 1 checkpoint, 2026-04-24). Pending Phase 2+: TECHNICAL-ARCHITECTURE.md, CLAUDE.md update, spec backfilling (0.0.7-progression-analyzer.md), ADR backfilling (0001-0004 decision records).
+**0.0.8 AudioExtractor design — Chris approved 2026-04-25; in Sanctuary review.** Committed to specs/0.0.8-audio-extractor.md with all six open questions resolved. Awaiting Sanctuary's confirmation of slice 9–12 intersection points (Phase C/AudioExtractor integration boundaries). After Sanctuary clears, implementation prompt will be generated: phased approach with three intermediate checkpoints (Phase 1 DSP primitives, Phase 2 MusicTheory additions, Phase 3 AudioExtractor pipeline, Phase 4 release mechanics).
 
 ## Next Up
 
@@ -112,4 +110,4 @@ This replaces the earlier "extract then integrate" loop with upfront design. Cos
 
 ---
 
-**Last Updated:** 2026-04-24 — Governance bootstrap Phase 1 complete. MCC-CODEX.md and TASKS.md aligned to Capability Areas; backlog reorganized for roadmap visibility. Ready for 0.0.8 AudioExtractor design phase and Phase 2+ (TECHNICAL-ARCHITECTURE, CLAUDE.md update, spec/ADR backfilling).
+**Last Updated:** 2026-04-25 — 0.0.8 AudioExtractor design spec drafted and approved by Chris; in Sanctuary review.
