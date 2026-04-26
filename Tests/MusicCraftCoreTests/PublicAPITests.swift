@@ -468,6 +468,62 @@ final class PublicAPITests: XCTestCase {
         XCTAssertTrue(true)
     }
 
+    // MARK: - ContourNote Public API (0.0.8)
+
+    func testContourNotePublicConstruction() {
+        let note = ContourNote(
+            pitchSemitoneStep: 2,
+            parsonsCode: .up,
+            onsetTime: 0.5,
+            duration: 0.4
+        )
+
+        XCTAssertNotNil(note)
+        XCTAssertEqual(note.pitchSemitoneStep, 2)
+    }
+
+    func testParsonsCodePublic() {
+        let code = ParsonsCode.up
+        XCTAssertEqual(code.rawValue, "*")
+    }
+
+    // MARK: - DetectedNote Public API (0.0.8)
+
+    func testDetectedNotePublicConstruction() {
+        let note = DetectedNote(
+            midiNote: 60,
+            onsetTime: 0.5,
+            duration: 0.4,
+            confidence: 0.9
+        )
+
+        XCTAssertNotNil(note)
+        XCTAssertEqual(note.midiNote, 60)
+        XCTAssertEqual(note.pitchClass, 0)
+    }
+
+    // MARK: - MelodyKeyInference Public API (0.0.8)
+
+    func testMelodyKeyInferencePublicAPI() {
+        let notes = [
+            DetectedNote(midiNote: 60, onsetTime: 0.0, duration: 0.1, confidence: 0.9),
+            DetectedNote(midiNote: 62, onsetTime: 0.1, duration: 0.1, confidence: 0.9),
+            DetectedNote(midiNote: 64, onsetTime: 0.2, duration: 0.1, confidence: 0.9),
+        ]
+
+        let candidates = MelodyKeyInference.infer(from: notes)
+
+        XCTAssertNotNil(candidates)
+    }
+
+    func testMelodyKeyInferenceKeyCandidatePublic() {
+        let key = MusicalKey(root: .C, mode: .major)
+        let candidate = MelodyKeyInference.KeyCandidate(key: key, score: 0.95, tonicFrequency: 3)
+
+        XCTAssertNotNil(candidate)
+        XCTAssertEqual(candidate.score, 0.95)
+    }
+
     // MARK: - Stub Classifier Provider
 
     private class StubClassifierProvider: ChordClassifierProvider {
