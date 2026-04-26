@@ -1,7 +1,7 @@
 import Foundation
 
 /// The basic chord qualities: major, minor, diminished, augmented, sevenths, sus, and add9.
-public enum ChordQuality: String, CaseIterable {
+public enum ChordQuality: String, CaseIterable, Sendable {
     case major = "major"
     case minor = "minor"
     case diminished = "dim"

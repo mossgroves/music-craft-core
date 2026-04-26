@@ -1,7 +1,7 @@
 import Foundation
 
 /// A chord with root, quality, and associated metadata.
-public struct Chord: Equatable, Identifiable {
+public struct Chord: Equatable, Hashable, Sendable, Identifiable {
     /// Unique identifier.
     public let id: UUID
     /// Root note of the chord.
