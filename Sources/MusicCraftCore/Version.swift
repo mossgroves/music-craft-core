@@ -1,4 +1,4 @@
 import Foundation
 
 /// Version string for MusicCraftCore.
-public let musicCraftCoreVersion = "0.0.7"
+public let musicCraftCoreVersion = "0.0.8"

@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.8] - 2026-04-25
+
+### Added
+- AudioExtractor: offline audio analysis pipeline composing all MCC subsystems (DSP primitives, music theory types, chord detection, pitch detection, key inference) into a unified Result struct with chord segments, inferred key, melodic contour, detected notes, and buffer duration.
+- AudioExtractor.Configuration: tuning parameters for onset detection (minGapMs, energyMultiplier, energyFloor), chroma analysis (windowSize, hopSize), early-frame windowing (attackSkip, windowSize), extraction confidence thresholds, and silence threshold for noise calibration.
+- AudioExtractor.Result: public struct bundling chordSegments, inferred MusicalKey, ContourNote contour, DetectedNote array, and duration.
+- AudioExtractor.ChordSegment: public struct with UUID id, start/end times, detected Chord, confidence score, and DetectionMethod enum (classifier/interval/agreement).
+- ContourNote and ParsonsCode: melodic pitch trajectory with direction codes (up "*", down "d", repeat "r") per MIR literature. First note convention: pitchSemitoneStep=0, parsonsCode=.repeat_ for no-predecessor case.
+- DetectedNote: raw monophonic note event with MIDI note, absolute timing, duration, confidence, and computed pitchClass property.
+- MelodyKeyInference: key inference via diatonic-fit scoring on 24 keys (12 roots × 2 modes), with tie-breaking by tonic frequency count and minor mode preference. Returns ordered KeyCandidate array with key, score, tonicFrequency.
+- OnsetDetector: energy-based note onset detection using RMS energy with running average threshold (multiplier × previous_average). Configurable gap enforcement to prevent sub-threshold repeats.
+- NoiseCalibrator: silence frame detection via RMS threshold; averaged chroma extraction from silence windows for noise baseline subtraction. Contamination limit prevents non-silence baselines.
+- NoiseBaseline: public struct with chroma vector and frameCount for noise-aware analysis.
+- Sendable conformance on Chord and ChordQuality (additive; required for AudioExtractor.ChordSegment Sendable conformance).
+- Hashable conformance on Chord (additive; non-breaking).
+
+### Changed
+- Chord struct now conforms to Hashable and Sendable in addition to Equatable and Identifiable. Non-breaking.
+- ChordQuality enum now conforms to Sendable. Non-breaking.
+
+### Known Limitations
+- AudioExtractor pipeline tests in 0.0.8 are structural-only. Synthetic test fixtures (sine waves with smooth envelopes) cannot drive OnsetDetector's RMS-energy threshold reliably enough to validate end-to-end chord detection and key inference correctness. Real-audio fixture tests with recorded guitar and vocal samples are deferred to a future patch release (likely 0.0.8.1 or 0.0.9). Cantus and Sanctuary consumer adoption will exercise the pipeline against real audio in production use.
+- Onset detection is energy-based (RMS with running average); spectral flux upgrade deferred to a future MCC DSP enhancement.
+- KeyInference and MelodyKeyInference heuristic weights remain internal constants; configurable weights deferred until a consumer requests them.
+- ContourNote pipeline assumes monophonic pitched input; polyphonic vocal/instrumental sources produce sparse or empty contour. Sanctuary will validate Configuration defaults against representative vocal recordings during slice 9 integration.
+
 ## [0.0.7] - 2026-04-24
 
 ### Added
