@@ -93,9 +93,40 @@ Tests/MusicCraftCoreTests/
   MusicTheoryTests.swift               ← Music theory unit tests
 ```
 
+## Release Shipping Tiers
+
+MCC distinguishes between Tier 1 and Tier 2 releases to match implementation complexity with validation rigor.
+
+### Tier 1 releases (major extractions)
+
+Tier 1 applies when a release introduces multiple novel subsystems, new architecture patterns, or opens a subsystem for the first time. Examples: 0.0.5 (DSP subsystem opened), 0.0.6 (ChordDetection subsystem opened), 0.0.8 (AnalysisPipeline subsystem opened).
+
+**Requirements:**
+1. Full diagnosis-plan-execute pattern: design spec with hallucination audit → peer review (Chris and consumer projects) → phased implementation with intermediate checkpoints
+2. Explicit Chris approval before tagging and pushing
+3. Test suite passes with minimum count specified in design spec (typically +70 tests or equivalent coverage)
+4. At least one consumer app adoption verified on real audio before declaring the release stable
+5. Workspace coordination entry to affected consumer projects
+
+**Autonomy:** No autonomous shipping. Requires Chris's gate at the tag step.
+
+### Tier 2 releases (patches and single-subsystem additions)
+
+Tier 2 applies to patch releases (e.g., 0.0.6.1), single-subsystem feature additions, or internal refactors without public API changes.
+
+**Requirements:**
+1. Standard commit hygiene: green/yellow/red classification respected
+2. Test suite passes
+3. PublicAPITests extended if any public types were added or modified
+4. Workspace notification if the change affects consumer projects (e.g., public init fixes)
+
+**Autonomy:** Can proceed autonomously within red/yellow boundaries once tests pass. No Chris gate required unless a change is classified red.
+
 ## When in Doubt
 
 If a change touches public API, protocol signatures, or public types, classify it as red and pause for Chris's explicit approval. If it's internal or test-only, classify as yellow and include rationale in the commit body. If it's purely documentation, it's green.
+
+For releases: if you're uncertain whether a release is Tier 1 or Tier 2, err toward Tier 1 (more rigor). The diagnosis-plan-execute pattern prevents surprises downstream.
 
 ## Session Continuity
 
