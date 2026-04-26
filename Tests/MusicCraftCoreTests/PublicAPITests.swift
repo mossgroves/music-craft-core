@@ -402,6 +402,72 @@ final class PublicAPITests: XCTestCase {
         XCTAssertEqual(result?.matchType, .exact)
     }
 
+    // MARK: - OnsetDetector Public API (0.0.8)
+
+    func testOnsetDetectorPublicConfiguration() {
+        let config = OnsetDetector.Configuration(
+            windowSize: 2048,
+            hopSize: 1024,
+            minGapMs: 500,
+            energyMultiplier: 2.0,
+            energyFloor: 0.005,
+            runningAverageWindow: 10
+        )
+
+        XCTAssertNotNil(config)
+        XCTAssertEqual(config.windowSize, 2048)
+    }
+
+    func testOnsetDetectorPublicDefaultConfiguration() {
+        let config = OnsetDetector.Configuration.default
+
+        XCTAssertNotNil(config)
+        XCTAssertEqual(config.windowSize, 2048)
+        XCTAssertEqual(config.hopSize, 1024)
+    }
+
+    func testOnsetDetectorDetectOnsetsCallableExternally() {
+        let buffer = generateSineWave(frequency: 440.0, sampleRate: 44100, duration: 0.5)
+
+        let onsets = OnsetDetector.detectOnsets(buffer: buffer, sampleRate: 44100)
+
+        XCTAssertNotNil(onsets)
+    }
+
+    // MARK: - NoiseBaseline Public API (0.0.8)
+
+    func testNoiseBaselinePublicConstruction() {
+        let chroma = [Double](repeating: 0.1, count: 12)
+        let baseline = NoiseBaseline(chroma: chroma, frameCount: 10)
+
+        XCTAssertEqual(baseline.chroma.count, 12)
+        XCTAssertEqual(baseline.frameCount, 10)
+    }
+
+    func testNoiseBaselineTotalEnergyAccessible() {
+        let chroma = Array(0..<12).map { Double($0) * 0.1 }
+        let baseline = NoiseBaseline(chroma: chroma, frameCount: 5)
+
+        XCTAssertGreaterThan(baseline.totalEnergy, 0)
+    }
+
+    // MARK: - NoiseCalibrator Public API (0.0.8)
+
+    func testNoiseCalibratorCallableExternally() {
+        let buffer = [Float](repeating: 0, count: Int(2.0 * 44100))
+
+        let baseline = NoiseCalibrator.calibrateBaseline(
+            buffer: buffer,
+            sampleRate: 44100,
+            minSilenceFrames: 5
+        )
+
+        // NoiseCalibrator should be callable; baseline may or may not be produced
+        // The important thing is that it doesn't crash
+        _ = baseline
+        XCTAssertTrue(true)
+    }
+
     // MARK: - Stub Classifier Provider
 
     private class StubClassifierProvider: ChordClassifierProvider {
