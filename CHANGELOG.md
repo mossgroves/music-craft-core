@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.9] - 2026-04-26
+
+### Added
+- **Voice subsystem (new):** LyricsExtractor for on-device lyric transcription using Apple's Speech framework.
+  - LyricsExtractor: async transcribe method wrapping SFSpeechRecognizer (iOS 17+ baseline) with forward-compatible path to SpeechAnalyzer (iOS 26+) via feature detection in future releases.
+  - TranscribedToken: timestamped word-level tokens with text, onsetTime, duration, optional confidence (iOS 26+ only).
+  - SpeechFrameworkError: wrapped error handling for framework unavailability, recognition failures, locale mismatch, and permission denial.
+  - Enables lyric-based search and analysis in consumer apps (e.g., Sanctuary hum-to-search with lyric matching).
+
+- **DSP subsystem expansion:** BeatTracker and TempoEstimator for rhythm analysis.
+  - BeatTracker: beat detection via onset strength signal autocorrelation (RMS-based energy per frame, Accelerate-optimized). Configuration tuning: window/hop sizes, beat period range (20–200 BPM), autocorrelation threshold, inertia parameter for beat stability.
+  - TempoEstimator: tempo estimation from pre-detected beats or directly from audio buffer. Returns ranked candidate tempos with confidence scores and harmonic classification (captures tempo ambiguities from syncopation, rubato, triplets). Reuses BeatTracker for buffer path.
+  - TempoEstimate: public struct with bpm, confidence, isHarmonic flag for client-side tempo disambiguation.
+  - Both subsystems fully independent (no coupling between BeatTracker and TempoEstimator; coordinated onset computation deferred to 0.0.10+).
+
+### Known Limitations
+- **Real-audio fixtures deferred:** 0.0.9 ships with synthetic fixture tests only (structural validation, no algorithm accuracy on real audio). Real-audio ground-truth evaluation (beat accuracy, tempo estimation on live recordings) bundled with deferred 0.0.8 real-audio fixtures in 0.0.9.1 patch or 0.1.0 release.
+- **LyricsExtractor per-token confidence:** iOS 17 path (SFSpeechRecognizer) does not expose per-token confidence; confidence field always nil. SpeechAnalyzer (iOS 26+) with per-token confidence deferred to 0.0.10 as iOS 26 adoption broadens (currently ~60–70% market reach).
+- **Beat inertia parameter:** Exposed in BeatTracker.Configuration but not actively used in beat induction algorithm (baseline inertia = 0.5). Sophisticated Viterbi/HMM-based tempo tracking deferred to post-0.1.0.
+- **Tempo range:** 300–3000ms (20–200 BPM) covers typical pop/rock. Very slow music (<20 BPM, e.g., classical adagio) may be detected at double/triple/quarter tempo. Configurable via minBeatPeriodMs/maxBeatPeriodMs.
+- **Beat detection algorithm:** Autocorrelation-based; tempogram + Viterbi and ML-based refinement deferred to future releases.
+
+### Consumer Adoption Recommended
+- **Sanctuary:** Phase D search integration — lyric matching on LyricsExtractor tokens, rhythm-aware analysis using BeatTracker/TempoEstimator.
+- **Cantus:** Rhythm UI features — beat visualization from BeatTracker, tempo awareness from TempoEstimator.
+- **Guitar Atlas:** Rhythm transcription support (future work pending real-audio validation in 0.0.9.1).
+
 ## [0.0.8] - 2026-04-25
 
 ### Added

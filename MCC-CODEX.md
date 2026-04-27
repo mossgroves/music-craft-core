@@ -81,7 +81,9 @@ MCC's scope is organized into MIR task categories. Every item has a status indic
 
 - Energy-based onset detection (port of Cantus's current algorithm) — planned-for-0.0.8
 - Spectral flux onset detection — designed; deferred (future MCC DSP enhancement)
-- Beat tracking and tempo (BPM) estimation — designed; deferred. High-impact for Sanctuary; likely a 0.0.9 or 0.1.x release.
+- Beat tracking via onset strength signal autocorrelation (BeatTracker) — shipped (0.0.9)
+- Tempo (BPM) estimation from beats or buffer (TempoEstimator) — shipped (0.0.9)
+- Harmonic tempo ratio support (isHarmonic flag for double-tempo, half-tempo) — shipped (0.0.9)
 - Downbeat detection — deferred
 - Meter / time signature inference — deferred
 
@@ -100,7 +102,7 @@ MCC's scope is organized into MIR task categories. Every item has a status indic
 
 ### Voice and vocal analysis
 
-- Lyric extraction via Apple Speech framework wrapper (LyricsExtractor) — designed; deferred. Likely a 0.0.9 or 0.0.10 release. Wraps SFSpeechRecognizer (iOS 17+) and SpeechAnalyzer (iOS 26+) to produce timestamped word/phrase tokens that align to MCC's chord/melody timeline.
+- Lyric extraction via Apple Speech framework wrapper (LyricsExtractor) — shipped (0.0.9). Wraps SFSpeechRecognizer (iOS 17+) with forward-compatible path to SpeechAnalyzer (iOS 26+) for per-token confidence in future releases. Produces timestamped word/phrase tokens (TranscribedToken) that align to MCC's chord/melody timeline.
 - Vocal range and tessitura — designed; deferred. Computed from F0 distribution.
 - Pitch stability over sustained notes — designed; deferred. Standard deviation of F0 within held notes.
 - Vibrato analysis: rate, extent, regularity — designed; deferred. Computed from F0 over time via autocorrelation or FFT of the F0 curve.
@@ -269,4 +271,4 @@ Engine setup, adaptive noise gate, audio file reading.
 
 ---
 
-**Last Updated:** 2026-04-24 — MCC 0.0.7 shipped; ProgressionAnalyzer, RomanNumeral, SongReference, and 15-pattern library all public. Next: AudioExtractor design phase for 0.0.8.
+**Last Updated:** 2026-04-26 — MCC 0.0.9 shipped; Voice subsystem (LyricsExtractor) and Rhythm expansion (BeatTracker, TempoEstimator) complete. Capability Areas updated: Voice (LyricsExtractor shipped), Rhythm (beat/tempo shipped). Real-audio fixtures bundled with deferred 0.0.8 work in 0.0.9.1 patch. Next: consumer adoption (Sanctuary Phase D, Cantus rhythm UI), 0.0.1.0 or 0.1.0 planning.

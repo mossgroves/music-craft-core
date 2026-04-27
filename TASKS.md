@@ -2,17 +2,18 @@
 
 ## Active
 
-**0.0.8 AudioExtractor design — Chris approved 2026-04-25; in Sanctuary review.** Committed to specs/0.0.8-audio-extractor.md with all six open questions resolved. Awaiting Sanctuary's confirmation of slice 9–12 intersection points (Phase C/AudioExtractor integration boundaries). After Sanctuary clears, implementation prompt will be generated: phased approach with three intermediate checkpoints (Phase 1 DSP primitives, Phase 2 MusicTheory additions, Phase 3 AudioExtractor pipeline, Phase 4 release mechanics).
+None blocking. All releases through 0.0.9 complete on main.
 
 ## Next Up
 
-1. **0.0.8 AudioExtractor Implementation** — After design spec approved. Phased implementation using diagnosis-plan-execute pattern with intermediate fixture tests at highest-risk transitions.
+1. **0.0.9.1 Patch Release (Real-Audio Fixtures)** — Bundle deferred real-audio fixtures from both 0.0.8 and 0.0.9 into one combined fixture release. Ground-truth evaluation for AudioExtractor (chord detection, key inference, melodic contour on live recordings) and BeatTracker/TempoEstimator (beat accuracy, tempo estimation on real audio). Coordinate with Sanctuary and Cantus production feedback to validate algorithms on their use cases.
 
-2. **Sendable Audit on Legacy MusicTheory Types** — Audit all public MusicTheory types (Chord, ChordQuality, others) for Sendable conformance. Regression anchor: PublicAPITests.swift should verify all public types pass Sendable compile checks.
+2. **Consumer Adoption Sweeps** — Cascade 0.0.9 adoption to active consumer projects:
+   - Cantus 0.0.7+0.0.8 bundled adoption (deferred from previous session; stash@{0} forensic review complete per decisions/stash-0-forensic-review-2026-04-25.md)
+   - Sanctuary Phase D search integration (lyric matching on LyricsExtractor tokens, rhythm-aware analysis with BeatTracker/TempoEstimator)
+   - Guitar Atlas MCC 0.0.8 adoption (Phase D unblocked by AnalysisPipeline)
 
-3. **Merge release/0.0.7 into main on GitHub** — Currently main is ahead of release/0.0.7 (cross-project-log updates). Decide on merge strategy and execute (documented as open question in CODEX).
-
-4. **MCC-CODEX.md and TASKS.md Alignment to Capability Areas** — This session's documentation pass completing governance bootstrap Phase 1.
+3. **0.1.0 or 0.0.10 Planning** — Decide scope: voice/vocal features (vocal range, vibrato, voice type classification), structure analysis (section segmentation), spectral analysis (MFCC foundation), or AnalysisResult JSON bundled record. See Capability Areas in CODEX.md for complete deferred backlog.
 
 ## Backlog
 
@@ -29,10 +30,11 @@ Organized by MIR Capability Area (see CODEX.md for complete roadmap and status d
 
 ### Rhythm analysis
 
-- Beat tracking and tempo (BPM) estimation — designed; deferred. High-impact for Sanctuary; likely a 0.0.9 or 0.1.x release.
 - Downbeat detection — deferred
 - Meter / time signature inference — deferred
 - Spectral flux onset detection — designed; deferred (future MCC DSP enhancement beyond 0.0.8 energy-based onset)
+- Tempogram + Viterbi beat tracking (alternative to 0.0.9 autocorrelation) — designed; deferred to post-0.1.0
+- ML-based beat detection via Core ML — designed; deferred to post-0.1.0
 
 ### Structure analysis
 
@@ -46,7 +48,7 @@ Organized by MIR Capability Area (see CODEX.md for complete roadmap and status d
 
 ### Voice and vocal analysis
 
-- LyricsExtractor (lyric extraction wrapping Apple's Speech framework) — designed; deferred. Likely a 0.0.9 or 0.0.10 release. Wraps SFSpeechRecognizer (iOS 17+) or SpeechAnalyzer (iOS 26+) with timestamped word/phrase tokens aligned to MCC's chord/melody timeline.
+- SpeechAnalyzer iOS 26+ upgrade to LyricsExtractor — designed; deferred to 0.0.10 when iOS 26 adoption broadens. Feature detection in 0.0.9 prepares for future upgrade to per-token confidence.
 - Vocal range and tessitura — designed; deferred. Computed from F0 distribution.
 - Pitch stability over sustained notes — designed; deferred. Standard deviation of F0 within held notes.
 - Vibrato analysis: rate, extent, regularity — designed; deferred. Computed from F0 over time via autocorrelation or FFT of the F0 curve.
@@ -74,6 +76,8 @@ Organized by MIR Capability Area (see CODEX.md for complete roadmap and status d
 - 0.1.0 tag after 0.0.8 ships clean — Mark extraction phase complete and readiness for first 1.x pre-release cycle.
 
 ## Recently Shipped
+
+**0.0.9 (2026-04-26)** — Voice subsystem (LyricsExtractor wrapping SFSpeechRecognizer for on-device lyric transcription) and Rhythm expansion (BeatTracker and TempoEstimator using onset strength autocorrelation). LyricsExtractor produces TranscribedToken (timestamped word/phrase tokens with optional confidence for iOS 26+ via SpeechAnalyzer in future releases). BeatTracker detects beat times via autocorrelation-based onset strength signal analysis. TempoEstimator ranks tempo candidates from beats or buffer with harmonic ratio support (double-tempo, half-tempo disambiguation). Structural tests only: 11 LyricsExtractor tests, 11 BeatTracker tests, 13 TempoEstimator/Config tests. Real-audio fixtures deferred to 0.0.9.1 patch. Total: 279 tests passing. Tier 1 release: diagnosis-plan-execute pattern with design spec (specs/0.0.9-lyrics-and-beat.md, commit 6688fda) and four Chris-approved decisions (iOS 17+ target, autocorrelation algorithm, independent subsystems, real-audio fixtures deferred).
 
 **0.0.7 (2026-04-24)** — ProgressionAnalyzer stateless enum with KeyInference (24-key scoring, 6 heuristic weights) and PatternRecognition (15-pattern library, exact/fuzzy matching). RomanNumeral typed value with Degree/Accidental/Quality nested enums, supporting diatonic and borrowed chord spelling. SongReference value type for pattern citations. RecognizedPattern with MatchType enum. Hashable and Sendable conformance added to MusicalKey, KeyMode, NoteName. PublicAPITests extended with 6 new tests validating public type construction and ProgressionAnalyzer public API. 143 tests passing, no warnings.
 
