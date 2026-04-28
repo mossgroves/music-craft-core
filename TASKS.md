@@ -7,6 +7,7 @@ None blocking. All releases through 0.0.9 complete on main.
 ## Next Up
 
 1. **0.0.9.1 Patch Release (Real-Audio Fixtures)** — Bundle deferred real-audio fixtures from both 0.0.8 and 0.0.9 into one combined fixture release. Ground-truth evaluation for AudioExtractor (chord detection, key inference, melodic contour on live recordings) and BeatTracker/TempoEstimator (beat accuracy, tempo estimation on real audio). Coordinate with Sanctuary and Cantus production feedback to validate algorithms on their use cases.
+   - **Tautology fix in TempoEstimatorTests:** testEstimateTempoFromBeatsMultiple (line 20–26) currently asserts `XCTAssertGreaterThanOrEqual(tempos.count, 0)` — always passes. Replace with real BPM assertion when real-audio fixtures land: verify estimated tempo is within tolerance of expected value (e.g., 120 BPM input → estimated BPM ∈ [110, 130]).
 
 2. **Consumer Adoption Sweeps** — Cascade 0.0.9 adoption to active consumer projects:
    - Cantus 0.0.7+0.0.8 bundled adoption (deferred from previous session; stash@{0} forensic review complete per decisions/stash-0-forensic-review-2026-04-25.md)
