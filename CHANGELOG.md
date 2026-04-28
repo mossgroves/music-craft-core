@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Audio analysis testing infrastructure (Phase 1):** Synthetic fixture baseline + test harness for chord, tempo, and note detection validation.
+  - AudioFixtureLoader: lazy fixture loading with support for synthetic audio generation (all-major-triads, all-minor-triads, common-sevenths, steady-tempo metronome, C major scale) and optional ground-truth annotations.
+  - SyntheticGenerator: static helper methods for creating test audio (generateSineWave, generateChordBuffer, generateMetronomeClick, etc.) with envelope modeling (attack, sustain, release).
+  - GroundTruth: enum annotation types for chord progressions, tempo, melody notes, and lyrics with timing and confidence metadata.
+  - AudioAnalysisMetrics: mir_eval-inspired chord comparison (rootAccuracy, qualityAccuracy, exactAccuracy, timingDeviation, falsePositives, falseNegatives) using majMin chord reduction and timing tolerance windows. Also includes tempo and note comparison metrics.
+  - SyntheticChordTests, SyntheticTempoTests, SyntheticNoteTests: structural validation tests for extraction pipeline (correctness validation deferred to real-audio Phase 2 with GADA dataset).
+  - All tests pass (290/290 suite). Documentation: docs/AUDIO_TESTING_STRATEGY.md with 7-section specification of test fixtures, metrics, harness architecture, and 5-phase implementation plan.
+
 ## [0.0.9] - 2026-04-26
 
 ### Added
