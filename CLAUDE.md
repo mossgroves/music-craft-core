@@ -51,6 +51,7 @@ Similar to Cantus/CLAUDE.md:
 - File deletions or renames
 - Package.swift version or tag operations
 - Any open questions that Chris has not resolved
+- **Integration of third-party code or algorithms without security review.** Before porting, adapting, or integrating any external code (academic libraries, reference implementations, algorithm papers), produce a security analysis document covering: (1) code injection vectors (eval, exec, compile, __import__, pickle, subprocess, os.system, open); (2) ReDoS vulnerabilities in regex patterns; (3) buffer/array handling and bounds safety; (4) dependency analysis and transitive risks; (5) cryptographic or sensitive data handling; (6) exception handling design; (7) known CVEs or security advisories. Classify as SAFE TO PORT with specific Swift adaptation recommendations, or UNSAFE with reasons. File the analysis in /tmp/ or docs/security/ and link from the implementing commit. Examples: mir_eval chord validation, external pitch detection references, DSP algorithm implementations.
 
 ## Grounding and Assumption Discipline
 
