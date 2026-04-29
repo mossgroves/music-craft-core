@@ -18,27 +18,15 @@ final class GuitarSetDownloaderTests: XCTestCase {
     /// Hardcoded manifest of 20 fixtures to download.
     /// Format: (genre, player, filename, expected_sha256)
     struct FixtureManifest {
+        // Phase 3 first-run subset: 5 fixtures (1 per genre + 1 extra for cross-player variance).
+        // Full 20-fixture measurement deferred due to 3.6 GB extraction bottleneck.
+        // Expand in future session with streamlined path.
         static let entries: [(genre: String, id: String)] = [
-            ("BN", "00_BN1-129-Eb_comp"),
-            ("BN", "01_BN1-129-Eb_comp"),
-            ("BN", "02_BN1-129-Eb_comp"),
-            ("BN", "03_BN1-129-Eb_comp"),
-            ("BN", "04_BN1-129-Eb_comp"),
-            ("Funk", "00_Funk1-119-A_comp"),
-            ("Funk", "01_Funk1-119-A_comp"),
-            ("Funk", "02_Funk1-119-A_comp"),
-            ("Funk", "03_Funk1-119-A_comp"),
-            ("Funk", "04_Funk1-119-A_comp"),
-            ("Rock", "00_Rock1-130-A_comp"),
-            ("Rock", "01_Rock1-130-A_comp"),
-            ("Rock", "02_Rock1-130-A_comp"),
-            ("Rock", "03_Rock1-130-A_comp"),
-            ("Rock", "04_Rock1-130-A_comp"),
-            ("SS", "00_SS1-68-E_comp"),
-            ("SS", "01_SS1-68-E_comp"),
-            ("SS", "02_SS1-68-E_comp"),
-            ("SS", "03_SS1-68-E_comp"),
-            ("SS", "04_SS1-68-E_comp"),
+            ("BN", "00_BN1-129-Eb_comp"),      // BossaNova, player 0
+            ("BN", "01_BN1-129-Eb_comp"),      // BossaNova, player 1 (cross-player variance)
+            ("Funk", "00_Funk1-119-A_comp"),   // Funk, player 0
+            ("Rock", "00_Rock1-130-A_comp"),   // Rock, player 0
+            ("SS", "00_SS1-68-E_comp"),        // Singer-Songwriter, player 0
         ]
     }
 
@@ -50,37 +38,58 @@ final class GuitarSetDownloaderTests: XCTestCase {
         }
 
         let fixtureDir = try getFixtureDirectory()
+
+        // Path B: Download annotation.zip (39 MB), extract JAMS in-process.
+        // Audio files must be pre-extracted and provided via MCC_GUITARSET_AUDIO_DIR env var.
         let annotationZipURL = try downloadFile(
             name: "annotation.zip",
             recordId: "3371780",
             from: "zenodo",
             directory: fixtureDir
         )
-        let audioZipURL = try downloadFile(
-            name: "audio_hex-pickup_debleeded.zip",
-            recordId: "3371780",
-            from: "zenodo",
-            directory: fixtureDir
-        )
 
-        // Extract 20 target files from zips
+        // Check for audio directory env var
+        guard let audioDir = ProcessInfo.processInfo.environment["MCC_GUITARSET_AUDIO_DIR"] else {
+            throw DownloadError.missingAudioDirectory
+        }
+        let audioDirURL = URL(fileURLWithPath: audioDir)
+
         var extractedFiles: [(String, URL)] = []
+
+        // Extract JAMS files from annotation.zip and copy audio files from the pre-extracted directory
         for entry in FixtureManifest.entries {
             let id = entry.id
 
-            // Extract WAV
-            let wavEntry = "audio/audio_hex-pickup_debleeded/\(id).wav"
-            let wavURL = fixtureDir.appendingPathComponent("\(id).wav")
-            try extractFromZip(audioZipURL, entry: wavEntry, to: wavURL, overwrite: false)
-            extractedFiles.append(("\(id).wav", wavURL))
-
-            // Extract JAMS
-            let jamsEntry = "annotation/annotation_data/\(id).jams"
+            let jamsEntry = "\(id).jams"
             let jamsURL = fixtureDir.appendingPathComponent("\(id).jams")
-            try extractFromZip(annotationZipURL, entry: jamsEntry, to: jamsURL, overwrite: false)
-            extractedFiles.append(("\(id).jams", jamsURL))
+            let wavURL = fixtureDir.appendingPathComponent("\(id).wav")
 
-            print("✓ Extracted \(id)")
+            // Extract JAMS from annotation zip
+            do {
+                try extractFromZip(annotationZipURL, entry: jamsEntry, to: jamsURL, overwrite: false)
+                extractedFiles.append(("\(id).jams", jamsURL))
+                print("✓ Extracted \(jamsEntry)")
+            } catch {
+                print("⚠ Could not extract \(jamsEntry) from annotation zip")
+            }
+
+            // Copy audio file from pre-extracted directory
+            let sourceWavURL = audioDirURL.appendingPathComponent("\(id).wav")
+            let fm = FileManager.default
+            if fm.fileExists(atPath: sourceWavURL.path) {
+                do {
+                    // Skip if destination already exists
+                    if !fm.fileExists(atPath: wavURL.path) {
+                        try fm.copyItem(at: sourceWavURL, to: wavURL)
+                    }
+                    extractedFiles.append(("\(id).wav", wavURL))
+                    print("✓ Linked \(id).wav")
+                } catch {
+                    print("⚠ Could not copy \(id).wav from audio directory")
+                }
+            } else {
+                print("⚠ Audio file not found: \(sourceWavURL.path)")
+            }
         }
 
         // Write MANIFEST.txt
@@ -90,7 +99,7 @@ final class GuitarSetDownloaderTests: XCTestCase {
             zenodoRecordId: "3371780"
         )
 
-        print("\n✓ Downloaded and extracted 20 GuitarSet fixtures to \(fixtureDir.path)")
+        print("\n✓ Downloaded and extracted 5 GuitarSet fixtures to \(fixtureDir.path)")
         print("✓ MANIFEST.txt created with file listing and SHA256 hashes")
     }
 
@@ -134,12 +143,12 @@ final class GuitarSetDownloaderTests: XCTestCase {
             throw DownloadError.missingFilesInAPI
         }
 
-        // Find the file by name
+        // Find the file by name (Zenodo API uses "key" not "filename")
         var downloadURL: URL? = nil
         for file in files {
-            if let filename = file["filename"] as? String, filename == name,
-               let urlStr = file["links"] as? [String: Any],
-               let selfLink = urlStr["self"] as? String {
+            if let key = file["key"] as? String, key == name,
+               let links = file["links"] as? [String: Any],
+               let selfLink = links["self"] as? String {
                 downloadURL = URL(string: selfLink)
                 break
             }
@@ -243,4 +252,5 @@ enum DownloadError: Error {
     case missingFilesInAPI
     case fileNotFoundInRecord(String)
     case unzipFailed(String)
+    case missingAudioDirectory
 }

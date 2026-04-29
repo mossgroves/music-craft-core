@@ -79,6 +79,12 @@ struct GuitarSetFixture {
     /// Get the standard GuitarSet fixture directory.
     /// Mirrors the pattern from RealAudioChordTests.
     static func fixtureDirectory() -> URL? {
+        // Try hardcoded standard path first
+        let standardPath = URL(fileURLWithPath: "/Users/chris/Documents/Code/mossgroves-music-craft-core/Tests/MusicCraftCoreTests/AudioAnalysis/Fixtures/real-audio/guitarset")
+        if FileManager.default.fileExists(atPath: standardPath.path) {
+            return standardPath
+        }
+
         // Fixtures are bundled in the test target
         let testBundle = Bundle.main
 
