@@ -297,6 +297,150 @@ final class Phase26DiagnosticTests: XCTestCase {
         return nil
     }
 
+    // MARK: - Phase 2.7: Segment Presence Dump
+
+    /// Phase 2.7 clarification 2b: For 10 failing fixtures, dump full segment list to understand
+    /// whether the correct chord is present in any segment (cheap segment-selection fix) or missing
+    /// entirely (expensive detector improvement needed).
+    func testPhase27_SegmentPresenceDump() throws {
+        guard ProcessInfo.processInfo.environment["MCC_DIAGNOSTIC"] == "1" else {
+            throw XCTSkip("Diagnostic tests disabled. Set MCC_DIAGNOSTIC=1 to enable.")
+        }
+
+        guard let gadaDir = getFixturesDirectory(named: "real-audio/gada"),
+              let taylorDir = getFixturesDirectory(named: "real-audio/taylor-nylon") else {
+            throw XCTSkip("Fixture directories not available")
+        }
+
+        // 10 failing fixtures: 5 GADA, 5 TaylorNylon
+        let failingGADA = [
+            ("ArgSG_Em_open_022_ID4_1.wav", "Em"),
+            ("Gretsch_A_open_022_ID1_1.wav", "A"),
+            ("HBLP_D_open_022_ID1_1.wav", "D"),
+            ("ArgSG_A_open_022_ID4_1.wav", "A"),
+            ("ArgSG_B_open_022_ID1_1.wav", "B"),
+        ]
+
+        let failingTaylor = [
+            ("Dm", "Dm_001.wav", "Dm"),
+            ("Dm", "Dm_002.wav", "Dm"),
+            ("Fm", "Fm_001.wav", "Fm"),
+            ("Fm", "Fm_002.wav", "Fm"),
+            ("D", "D_001.wav", "D"),
+        ]
+
+        var dump = "=== Phase 2.7 Segment Presence Dump ===\n\n"
+
+        dump += "GADA failing fixtures:\n"
+        for (filename, expectedChord) in failingGADA {
+            let wavURL = gadaDir.appendingPathComponent(filename)
+            guard FileManager.default.fileExists(atPath: wavURL.path) else {
+                dump += "  ⚠ \(filename) not found\n"
+                continue
+            }
+
+            guard let audioFile = try? AVAudioFile(forReading: wavURL),
+                  let buffer = AVAudioPCMBuffer(pcmFormat: audioFile.processingFormat,
+                                               frameCapacity: AVAudioFrameCount(audioFile.length)) else {
+                dump += "  ⚠ \(filename) could not be read\n"
+                continue
+            }
+
+            try audioFile.read(into: buffer)
+            guard let floatData = buffer.floatChannelData else { continue }
+
+            let frameLength = Int(buffer.frameLength)
+            let samples = Array<Float>(UnsafeBufferPointer(start: floatData[0], count: frameLength))
+            let duration = Double(frameLength) / audioFile.processingFormat.sampleRate
+
+            let result = AudioExtractor.extract(buffer: samples, sampleRate: audioFile.processingFormat.sampleRate)
+
+            dump += "\nFile: \(filename) (expected: \(expectedChord), duration: \(String(format: "%.2f", duration))s)\n"
+            dump += "  Total segments detected: \(result.chordSegments.count)\n"
+
+            if result.chordSegments.isEmpty {
+                dump += "  (no segments detected)\n"
+            } else {
+                // Check if correct chord is in any segment
+                let hasCorrect = result.chordSegments.contains { $0.chord.root.displayName == expectedChord }
+                dump += "  Correct chord (\(expectedChord)) present: \(hasCorrect ? "YES" : "NO")\n"
+
+                // Dump all segments
+                for (idx, seg) in result.chordSegments.enumerated() {
+                    let detected = seg.chord.root.displayName
+                    let isCorrect = detected == expectedChord
+                    let mark = isCorrect ? "✓" : "✗"
+                    dump += "    [\(idx)] \(mark) \(detected) (confidence: \(String(format: "%.3f", seg.confidence)), "
+                    dump += "duration: \(String(format: "%.2f", seg.endTime - seg.startTime))s, "
+                    dump += "start: \(String(format: "%.2f", seg.startTime))s)\n"
+                }
+
+                // Summary
+                let pickedChord = result.chordSegments.first?.chord.root.displayName ?? "NONE"
+                let isPickedCorrect = pickedChord == expectedChord
+                dump += "  → Picked: \(pickedChord) (\(isPickedCorrect ? "correct" : "WRONG"))\n"
+            }
+        }
+
+        dump += "\n" + String(repeating: "-", count: 60) + "\n"
+        dump += "TaylorNylon failing fixtures:\n"
+        for (chordFolder, filename, expectedChord) in failingTaylor {
+            let wavURL = taylorDir.appendingPathComponent(chordFolder).appendingPathComponent(filename)
+            guard FileManager.default.fileExists(atPath: wavURL.path) else {
+                dump += "  ⚠ \(chordFolder)/\(filename) not found\n"
+                continue
+            }
+
+            guard let audioFile = try? AVAudioFile(forReading: wavURL),
+                  let buffer = AVAudioPCMBuffer(pcmFormat: audioFile.processingFormat,
+                                               frameCapacity: AVAudioFrameCount(audioFile.length)) else {
+                dump += "  ⚠ \(chordFolder)/\(filename) could not be read\n"
+                continue
+            }
+
+            try audioFile.read(into: buffer)
+            guard let floatData = buffer.floatChannelData else { continue }
+
+            let frameLength = Int(buffer.frameLength)
+            let samples = Array<Float>(UnsafeBufferPointer(start: floatData[0], count: frameLength))
+            let duration = Double(frameLength) / audioFile.processingFormat.sampleRate
+
+            let result = AudioExtractor.extract(buffer: samples, sampleRate: audioFile.processingFormat.sampleRate)
+
+            dump += "\nFile: \(chordFolder)/\(filename) (expected: \(expectedChord), duration: \(String(format: "%.2f", duration))s)\n"
+            dump += "  Total segments detected: \(result.chordSegments.count)\n"
+
+            if result.chordSegments.isEmpty {
+                dump += "  (no segments detected)\n"
+            } else {
+                let hasCorrect = result.chordSegments.contains { $0.chord.root.displayName == expectedChord }
+                dump += "  Correct chord (\(expectedChord)) present: \(hasCorrect ? "YES" : "NO")\n"
+
+                for (idx, seg) in result.chordSegments.enumerated() {
+                    let detected = seg.chord.root.displayName
+                    let isCorrect = detected == expectedChord
+                    let mark = isCorrect ? "✓" : "✗"
+                    dump += "    [\(idx)] \(mark) \(detected) (confidence: \(String(format: "%.3f", seg.confidence)), "
+                    dump += "duration: \(String(format: "%.2f", seg.endTime - seg.startTime))s, "
+                    dump += "start: \(String(format: "%.2f", seg.startTime))s)\n"
+                }
+
+                let pickedChord = result.chordSegments.first?.chord.root.displayName ?? "NONE"
+                let isPickedCorrect = pickedChord == expectedChord
+                dump += "  → Picked: \(pickedChord) (\(isPickedCorrect ? "correct" : "WRONG"))\n"
+            }
+        }
+
+        // Write to temp file
+        let dumpURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("phase-2-7-segment-dump.txt")
+        try? dump.write(to: dumpURL, atomically: true, encoding: .utf8)
+
+        print("\n" + dump)
+        print("Dump written to: \(dumpURL.path)")
+
+        XCTAssert(true, "Diagnostic dump completed")
+    }
+
     private func isEnharmonicEquivalent(_ chord1: String, _ chord2: String) -> Bool {
         // Simple enharmonic mapping: C# = Db, D# = Eb, F# = Gb, G# = Ab, A# = Bb
         let enharmonics = [

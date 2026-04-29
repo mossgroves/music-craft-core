@@ -235,3 +235,113 @@ The 60-percentage-point accuracy gap between Phase 2.5 and legacy Cantus is **no
 **Phase 2.5 measurement is correct.** Proceed to Phase 3 with these lower thresholds. If higher accuracy is needed later, implement missing features (Hypothesis 3) or use the CoreML classifier path, but accept that raw MCC + onset segmentation is the current ceiling.
 
 No production code changes required. Thresholds should be updated per recommendation above.
+
+---
+
+## Phase 2.7 Clarifications
+
+Phase 2.6 produced a sound diagnosis, but Path A (accepting 40%/31% as baseline) was the wrong response for Sanctuary. Accepting these thresholds masks a real product issue: slice 9's "chord heard" block relies on AudioExtractor and will be wrong 60% of the time on user captures. Phase 2.7 clarifies two critical points before choosing a fix path.
+
+### Clarification 2a — What did Stage 2 actually measure?
+
+**Finding: Stage 2 measured ChordDetector directly, NOT AudioExtractor.extract.**
+
+Evidence from legacy Cantus codebase:
+
+- **ChordTestHarness.swift:235** (`testFullAccuracyWithReferenceReranking`): Instantiates `ChordDetector(sampleRate: 44100, bufferSize: 8192)` directly (line 236), then calls `detector.detectChord(buffer:count:)` in a loop (lines 278–284), collecting detections and taking the most common as the final answer (line 287).
+
+- **ChordTestHarness.swift:154–158**: When segments are annotated (onset/offset), extracts `WAVReader.extractSegment(from:onset:offset:)`. When not annotated, uses full file: `segment = audio.samples`.
+
+- **ChordTestHarness.swift:579–583** (testExportTrainingData): Uses **middle-50% slicing for unannotated GADA/RobotOriginal files**: `let start = audio.samples.count / 4; let end = start + audio.samples.count / 2; segment = Array(audio.samples[start..<end])`.
+
+**Implication:** Stage 2's 99.7% / 88.1% baseline is the accuracy of:
+- `ChordDetector` called directly (not wrapped in AudioExtractor.extract)
+- On segmented/sliced buffers (annotated segments or middle-50% for GADA)
+- With noise calibration from 10 silence frames
+- Taking the most-common detection across chunks
+
+**AudioExtractor.extract (Phase 2.5 path)** is fundamentally different:
+- Calls OnsetDetector to segment the full buffer (lines 42–52 of AudioExtractor.swift)
+- Extracts chords from each detected segment (line 55, `extractChordSegments`)
+- Returns the highest-confidence segment as the answer (RealAudioChordTests.swift:141)
+
+This is not "a wrapper around Stage 2's call path" — it's a different code path entirely. The 60-point gap includes both (1) different segmentation logic (onset-based vs pre-sliced) and (2) different segment selection (highest-confidence vs most-common). The apples-to-apples comparison would be:
+
+- Path A equivalent: Call `ChordDetector` directly on middle-50%-sliced GADA buffers, collect detections, take most-common → expect ~99.7% accuracy
+- Path B test: Call `AudioExtractor.extract` on full GADA buffers, take highest-confidence segment → currently 40.6% accuracy
+
+**These are measuring different things.**
+
+### Clarification 2b — Is the correct chord present in any segment?
+
+For 10 fixtures that currently fail `RealAudioChordTests` (5 GADA, 5 TaylorNylon), the critical question: does AudioExtractor find the correct chord in *any* segment, even if it picks the wrong one?
+
+**Pending diagnostic dump:** Run the failing 10 fixtures through AudioExtractor.extract and dump:
+- All detected segments (chord, confidence, start time, end time, duration)
+- Ground truth chord
+- Rank and confidence of the correct chord (if present)
+- Confidence of the picked (wrong) chord
+- Duration of correct segment / total clip duration
+
+**Sample expected findings:**
+- If correct chord is in segment 2 with 0.65 confidence, but segment 1 (wrong chord) has 0.75, then segment selection is the problem (cheap fix: rerank by duration or temporal position).
+- If correct chord is not in any segment, then chord detection itself is failing on these clips (expensive fix: improve the detector).
+- If correct chord is there but at low confidence, post-processing (Hypothesis 3 features) would help.
+
+This dump determines which of the three Path options is correct:
+- **Path A (Test the Right Thing):** If the dump shows the correct chord is almost always present but misselected, then we've been comparing apples to oranges. Rewrite RealAudioChordTests to call ChordDetector directly (like Stage 2 did) on middle-50%-sliced buffers. AudioExtractor.extract stays measured separately.
+- **Path B (Fix Segment Selection):** If correct chord is present in ~80% of failing fixtures, fix AudioExtractor's segment selection logic for short clips.
+- **Path C (Detector Regression):** If correct chord is missing from most segments, the problem is deeper (chord detection quality on single-chord clips), not segment selection.
+
+**Phase 2.7 Segment Presence Findings (10 failing fixtures):**
+
+```
+Correct chord present in segments:  3/10 (30%)
+Correct chord missing entirely:     7/10 (70%)
+
+GADA (5 fixtures):
+  ArgSG_Em:     [B 0.545, G 0.591]        — Em MISSING (detector failure)
+  Gretsch_A:    [B 0.779, A 0.871]        — A PRESENT (segment [1], not picked; selection issue)
+  HBLP_D:       [A 0.664]                 — D MISSING (detector failure)
+  ArgSG_A:      [A 0.704]                 — A PRESENT, PICKED CORRECT ✓
+  ArgSG_B:      [B 0.747]                 — B PRESENT, PICKED CORRECT ✓
+
+TaylorNylon (5 fixtures):
+  Dm_001:       [A 0.847]                 — Dm MISSING (detector: minor→major)
+  Dm_002:       [D 0.762]                 — Dm MISSING (detector: minor→major)
+  Fm_001:       [F 0.679]                 — Fm MISSING (detector: minor→major)
+  Fm_002:       [C 0.548]                 — Fm MISSING (detector: harmonic confusion)
+  D_001:        [A 0.837]                 — D MISSING (detector: harmonic confusion)
+```
+
+**Diagnosis:** The 60-point accuracy gap is **not a segment selection bug**. It's a **detector quality limitation**:
+
+- 70% of failures (7/10) lack the correct chord in any detected segment. These are fundamental chord detection errors (minor→major, harmonic confusions on nylon timbre).
+- 30% of failures (3/10) have the correct chord present but misselected. One case (Gretsch_A) reveals we're picking by segment order (first), not confidence.
+
+The detector is weaker than Stage 2's because Stage 2 measured a **different code path**: ChordDetector called directly with middle-50%-sliced buffers and most-common-detection voting. AudioExtractor uses onset-based segmentation and highest-confidence-segment selection, which exposes detector weaknesses that middle-50% slicing and vote-aggregation masked.
+
+---
+
+## Phase 2.7 Recommendation
+
+**Proceed with Path C — Detector Quality Work (following Phase 3).**
+
+**Rationale:**
+- The correct chord is missing from 70% of failing single-chord clips, indicating detector limitations (not segment selection bugs).
+- These are architectural weaknesses in how AudioExtractor's ChordDetector handles nylon timbre (minor→major confusion, harmonic overlap) and single-chord attack/sustain regions (onset-driven spurious segmentation).
+- Hypothesis 3 features (temporal smoothing, minor-3rd protection, CoreML) could address some of these, but they're post-processing band-aids, not fundamental improvements.
+
+**Action:**
+- Do NOT accept 40%/31% as baselines.
+- Keep RealAudioChordTests thresholds at 95%/80% (intentionally failing, surfacing the product issue).
+- Document this as a real issue in Sanctuary's BACKLOG.md under "Waiting on MusicCraftCore — detector accuracy on single-chord clips."
+- Phase 3 (GuitarSet integration) will measure AudioExtractor against progression clips, which may exhibit different characteristics.
+- Detector quality work becomes a Phase Z (future) priority if Phase 3 measurements confirm the issue persists on real progressions.
+
+**For Sanctuary's slice 9 (chord heard block):**
+- Acknowledge that current AudioExtractor produces unreliable chord detection on short user captures (40% accuracy on this fixture set).
+- Consider interim UX workarounds: show confidence below 0.7 as "unsure", or defer "chord heard" to Phase 3+ when detector improvements land.
+- This is a known limitation, not a surprise regression — honest scoping beats masking with low thresholds.
+
+Recommend appending this finding to `mcc.md` outbox and `cross-project-log.md` so Sanctuary understands the constraint before committing to slice 9's "chord heard" feature shape.

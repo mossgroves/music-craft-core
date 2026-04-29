@@ -9,14 +9,17 @@ final class RealAudioChordTests: XCTestCase {
     // MARK: - Baseline Thresholds
 
     struct Thresholds {
-        // Phase 2.5 measured baselines on real-audio fixtures (32 GADA, 109 TaylorNylon):
-        // These thresholds reflect actual AudioExtractor performance on this subset.
-        // Note: Legacy Cantus Stage 2 achieved 99.7% GADA root / 96.4% exact on full dataset,
-        // but this MCC build on subset achieves lower accuracy. Thresholds calibrated to prevent regression.
-        static let gadaRootAccuracy: Double = 0.38
-        static let gadaExactAccuracy: Double = 0.65
-        static let taylorNylonRootAccuracy: Double = 0.30
-        static let taylorNylonExactAccuracy: Double = 0.49
+        // PHASE 2.7 — Thresholds temporarily reverted to high baseline (95%/80%) to surface a real product issue.
+        // Phase 2.6 diagnostic confirmed AudioExtractor.extract produces 40.6% GADA root / 31.2% TaylorNylon root.
+        // Accepting this as "baseline" masks a critical gap: Sanctuary's slice 9 "chord heard" block will be wrong
+        // most of the time when users capture real audio. These high thresholds correctly fail and demand a fix path.
+        // See docs/diagnostics/phase-2-6-baseline-investigation.md for diagnostic findings and clarifications being
+        // investigated in Phase 2.7 (Stage 2 call path, segment presence dump, fix path selection).
+        // Stage 2 legacy baseline (99.7% GADA root, 88.1% TaylorNylon root) remains the target accuracy.
+        static let gadaRootAccuracy: Double = 0.95
+        static let gadaExactAccuracy: Double = 0.90
+        static let taylorNylonRootAccuracy: Double = 0.80
+        static let taylorNylonExactAccuracy: Double = 0.65
     }
 
     // MARK: - GADA Tests
