@@ -40,41 +40,63 @@ struct JAMSParser {
             guard let data = annotation["data"]?.arrayValue else { continue }
 
             switch namespace {
-            case "chord_harte":
+            case "chord", "chord_harte":
+                // GuitarSet can have "chord" or "chord_harte" namespace
+                // Data format: {"time": ..., "duration": ..., "value": "D#:maj", ...}
                 for item in data {
                     guard let itemDict = item.dictValue,
-                          let time = itemDict["time"]?.doubleValue,
-                          let valueDict = itemDict["value"]?.dictValue,
-                          let harteString = valueDict["chord"]?.stringValue else {
+                          let time = itemDict["time"]?.doubleValue else {
                         continue
                     }
 
-                    // Skip "N" (no-chord) regions
+                    // Value can be a direct string (GuitarSet format) or nested dict (fallback)
+                    let harteString: String?
+                    if let valueStr = itemDict["value"]?.stringValue {
+                        harteString = valueStr
+                    } else if let valueDict = itemDict["value"]?.dictValue,
+                              let harteStr = valueDict["chord"]?.stringValue {
+                        harteString = harteStr
+                    } else {
+                        continue
+                    }
+
+                    guard let harteString = harteString else { continue }
+
+                    // Skip "N" (no-chord) regions and silence
                     if harteString == "N" { continue }
 
                     // Translate Harte notation to MCC displayName
                     let mccChord = HarteTranslator.translate(harteString)
 
-                    // Calculate segment duration: distance to next chord or end of file
-                    // For now, we'll leave duration to be calculated later by the caller
+                    // GuitarSet format includes duration; use it for endTime
+                    let duration = itemDict["duration"]?.doubleValue ?? 0
+                    let endTime = duration > 0 ? time + duration : time
+
                     let segment = GroundTruth.ChordSegment(
                         chord: mccChord,
                         startTime: time,
-                        endTime: time,  // placeholder; updated in post-processing
+                        endTime: endTime,
                         confidence: 1.0
                     )
                     chordSegments.append(segment)
                 }
 
-            case "beat":
+            case "beat", "beat_position":
+                // GuitarSet may have "beat_position" namespace with complex structure,
+                // or simple "beat" namespace. Extract beat times from beat_position.
                 for item in data {
                     guard let itemDict = item.dictValue,
-                          let beatValue = itemDict["value"]?.doubleValue ?? itemDict["value"]?.intValue else {
+                          let beatTime = itemDict["time"]?.doubleValue else {
                         continue
                     }
-                    let beatTime = TimeInterval(beatValue as? Double ?? Double(beatValue as! Int))
                     beatTimes.append(beatTime)
                 }
+
+            case "tempo":
+                // GuitarSet tempo namespace: extract tempo in BPM
+                // We store beat times, so we'll skip this for now
+                // (tempo is used to derive BPM from inter-beat intervals if beats are sparse)
+                break
 
             case "key_mode":
                 // Key mode typically has one value describing the entire file
@@ -100,15 +122,21 @@ struct JAMSParser {
             }
         }
 
-        // Post-process chord segments: rebuild with correct endTimes
+        // Post-process chord segments: if endTime equals startTime (no duration was set),
+        // calculate from next chord's startTime or end of file
         var processedSegments: [GroundTruth.ChordSegment] = []
         for i in 0..<chordSegments.count {
-            let endTime = i + 1 < chordSegments.count ? chordSegments[i + 1].startTime : duration
+            let segment = chordSegments[i]
+
+            // Only recalculate if endTime wasn't set by duration
+            let endTime = segment.endTime > segment.startTime ? segment.endTime :
+                         (i + 1 < chordSegments.count ? chordSegments[i + 1].startTime : duration)
+
             let corrected = GroundTruth.ChordSegment(
-                chord: chordSegments[i].chord,
-                startTime: chordSegments[i].startTime,
+                chord: segment.chord,
+                startTime: segment.startTime,
                 endTime: endTime,
-                confidence: chordSegments[i].confidence
+                confidence: segment.confidence
             )
             processedSegments.append(corrected)
         }
