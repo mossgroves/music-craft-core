@@ -24,7 +24,7 @@ final class GuitarSetDownloaderTests: XCTestCase {
         static let entries: [(genre: String, id: String)] = [
             ("BN", "00_BN1-129-Eb_comp"),      // BossaNova, player 0
             ("BN", "01_BN1-129-Eb_comp"),      // BossaNova, player 1 (cross-player variance)
-            ("Funk", "00_Funk1-119-A_comp"),   // Funk, player 0
+            ("Funk", "00_Funk2-108-Eb_comp"),  // Funk, player 0
             ("Rock", "00_Rock1-130-A_comp"),   // Rock, player 0
             ("SS", "00_SS1-68-E_comp"),        // Singer-Songwriter, player 0
         ]

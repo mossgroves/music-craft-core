@@ -79,14 +79,18 @@ struct JAMSParser {
             case "key_mode":
                 // Key mode typically has one value describing the entire file
                 for item in data {
-                    guard let itemDict = item.dictValue,
-                          let valueDict = itemDict["value"]?.dictValue else {
-                        continue
-                    }
+                    guard let itemDict = item.dictValue else { continue }
 
-                    if let root = valueDict["root"]?.stringValue,
-                       let mode = valueDict["mode"]?.stringValue {
-                        keyString = "\(root):\(mode)"
+                    // GuitarSet key_mode value is a string like "Eb:major"
+                    if let keyValue = itemDict["value"]?.stringValue {
+                        keyString = keyValue
+                    }
+                    // Alternative format: value is a dict with "root" and "mode" keys
+                    else if let valueDict = itemDict["value"]?.dictValue {
+                        if let root = valueDict["root"]?.stringValue,
+                           let mode = valueDict["mode"]?.stringValue {
+                            keyString = "\(root):\(mode)"
+                        }
                     }
                 }
 
