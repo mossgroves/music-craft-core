@@ -2,7 +2,7 @@
 
 ## Active
 
-None blocking. All releases through 0.0.9 complete on main.
+1. **TempoEstimator + BeatTracker independent bug investigation** — Phase 3.2 real-audio measurements on GuitarSet fixtures revealed TempoEstimator has a systematic issue: all 5 test fixtures show detected tempo at exactly 1/3 of ground truth (129 BPM GT → 43 BPM detected, 108 → 36, etc.). This is NOT a cascade from ChordDetector (which was the initial hypothesis); chord detection works independently (CSR 37.5%). The autocorrelation-based algorithm is locking onto a 1/3 harmonic instead of the fundamental beat grid. Root cause candidates: autocorrelation threshold tuned for different signal characteristics, onset strength signal failing to threshold correctly on acoustic guitar, or buffer/sample-rate edge case. Needs algorithmic investigation. BeatTracker shows same pattern (1 beat in 22s on multi-chord file). Deferred to Phase 4+ pending priority allocation.
 
 ## Next Up
 
@@ -115,4 +115,4 @@ This replaces the earlier "extract then integrate" loop with upfront design. Cos
 
 ---
 
-**Last Updated:** 2026-04-25 — 0.0.8 AudioExtractor design spec drafted and approved by Chris; in Sanctuary review.
+**Last Updated:** 2026-04-29 — Phase 3.2 audit complete. JAMSParser fixed for GuitarSet v2 format. Corrected Phase 3 measurements: Progression CSR 37.5%, Tempo shows independent 1/3-tempo bug (0% accuracy), Key 0% exact. TempoEstimator/BeatTracker investigation added to Active tasks.
