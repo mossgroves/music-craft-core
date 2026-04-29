@@ -1,0 +1,65 @@
+#!/bin/bash
+# MCC pre-push hook. Runs swift test and blocks the push if the failure
+# set differs from .git-hooks/known-failing-tests.txt.
+
+set -uo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+ALLOWLIST="$REPO_ROOT/.git-hooks/known-failing-tests.txt"
+
+# Skip non-main pushes
+while read -r local_ref local_sha remote_ref remote_sha; do
+    if [[ "$remote_ref" != "refs/heads/main" ]]; then
+        echo "pre-push: skipping non-main branch ($remote_ref)"
+        exit 0
+    fi
+done
+
+echo "pre-push: running swift test..."
+TEST_OUTPUT="$(cd "$REPO_ROOT" && swift test 2>&1)"
+TEST_EXIT=$?
+
+# Extract failing test identifiers from output.
+# XCTest format: "Test Case '-[MusicCraftCoreTests.ClassName testMethodName]' failed"
+# Convert to: "MusicCraftCoreTests.ClassName/testMethodName"
+ACTUAL_FAILURES="$(echo "$TEST_OUTPUT" | \
+    grep "Test Case.*failed" | \
+    sed -E "s/.*'-\[([A-Za-z0-9.]+) ([a-zA-Z0-9]+)\]'.*/\1\/\2/" | \
+    sort -u)"
+
+# Read allowlist, stripping comments and blank lines
+EXPECTED_FAILURES="$(grep -v '^\s*#' "$ALLOWLIST" | grep -v '^\s*$' | sort -u)"
+
+# Compute set differences
+NEW_FAILURES="$(comm -23 <(echo "$ACTUAL_FAILURES") <(echo "$EXPECTED_FAILURES"))"
+FIXED_TESTS="$(comm -13 <(echo "$ACTUAL_FAILURES") <(echo "$EXPECTED_FAILURES"))"
+
+if [[ -n "$NEW_FAILURES" ]]; then
+    echo ""
+    echo "pre-push: BLOCKED — new test failures not in allowlist:"
+    echo "$NEW_FAILURES" | sed 's/^/  /'
+    echo ""
+    echo "Either fix these tests or add them to .git-hooks/known-failing-tests.txt"
+    echo "with a comment citing the phase/reason."
+    exit 1
+fi
+
+if [[ -n "$FIXED_TESTS" ]]; then
+    echo ""
+    echo "pre-push: BLOCKED — tests in allowlist are now passing:"
+    echo "$FIXED_TESTS" | sed 's/^/  /'
+    echo ""
+    echo "Remove these entries from .git-hooks/known-failing-tests.txt"
+    echo "(probably in the same commit that fixed them)."
+    exit 1
+fi
+
+if [[ $TEST_EXIT -ne 0 && -z "$ACTUAL_FAILURES" ]]; then
+    echo "pre-push: BLOCKED — swift test exited $TEST_EXIT but no failures parsed."
+    echo "This usually means a build error. Run 'swift test' manually."
+    exit 1
+fi
+
+FAILURE_COUNT="$(echo "$ACTUAL_FAILURES" | grep -c . || echo 0)"
+echo "pre-push: OK ($FAILURE_COUNT expected failures, no new ones)"
+exit 0

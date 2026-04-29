@@ -1,0 +1,35 @@
+# Tests that are EXPECTED to fail. The pre-push hook allows pushes when the
+# failure set exactly matches this list. New failures or fixed-but-still-listed
+# failures both block the push.
+#
+# Format: one test identifier per line, exact match against XCTest output.
+# Comments start with #. Blank lines ignored.
+#
+# When you fix a test, REMOVE its entry here in the same commit.
+# When you intentionally add a new failing test (Phase 2.7 / 3.2 style),
+# ADD its entry here in the same commit with a comment citing the phase / reason.
+
+# Phase 2.7 — ChordDetector single-chord accuracy
+# Ground truth: GADA 40.6% root, TaylorNylon 31.2% root
+# Thresholds set to 95% and 80% to surface the product issue and demand a fix path.
+# Stage 2 legacy baseline remains the target (99.7% GADA root, 88.1% TaylorNylon root).
+MusicCraftCoreTests.RealAudioChordTests/testGADAChordAccuracy
+MusicCraftCoreTests.RealAudioChordTests/testTaylorNylonChordAccuracy
+
+# Phase 3.2 — GuitarSet measurements (chord progression CSR below threshold)
+# Ground truth: Mean CSR 37.5% across 5 fixtures (0.8% to 59.4% range)
+# Threshold set to 50% to surface chord accuracy limitation (same root cause as Phase 2.7).
+# Per Phase 3.2 calibration rule: 37.5% is 12.5pp below anchor, surface as finding, do not lower threshold.
+MusicCraftCoreTests.GuitarSetProgressionTests/testGuitarSetProgressionAccuracy
+
+# Phase 3.3 — GuitarSet tempo (1/3-tempo bug, independent algorithmic issue)
+# Root cause: RMS-based onset strength captures chord attack transients (~215 BPM),
+# not beat grid (129 BPM) on polyphonic guitar. Deferred to 0.0.10 spectral flux redesign.
+# Measured result: 0% within ±10%, consistent 1/3 ratio across all fixtures (129→43, 108→36, etc.)
+MusicCraftCoreTests.GuitarSetTempoTests/testGuitarSetTempoAccuracy
+
+# Phase 3.2 — GuitarSet key inference (inherits chord accuracy)
+# Ground truth: 0% exact match, 20% relative match. Cascades from chord detection accuracy.
+# Per Phase 3.2: measurements from chord-rich comping only (chord-based key inference path).
+# MelodyKeyInference pitch-class fallback NOT exercised by these fixtures; do not claim general key accuracy.
+MusicCraftCoreTests.GuitarSetKeyInferenceTests/testGuitarSetKeyInferenceAccuracy
