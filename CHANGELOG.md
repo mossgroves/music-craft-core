@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Phase 3 GuitarSet integration test infrastructure:** Real-audio testing on polyphonic multi-chord guitar excerpts with JAMS annotations.
+  - JAMSParser: minimal Swift JSON parser for JAMS (chord_harte, beat, key_mode namespaces only). Harte notation translator (e.g., `A:min` → `Am`). Scope-limited to GuitarSet files; no external dependencies.
+  - GuitarSetFixture: 20 acoustic guitar excerpts from Zenodo dataset (CC-BY 4.0, NYU MARL + Queen Mary). Fixture loading with JAMS parsing and lazy WAV audio decoding.
+  - GuitarSetDownloaderTests (gated `MCC_DOWNLOAD_GUITARSET=1`): downloads annotation.zip and audio_hex-pickup_debleeded.zip from Zenodo record 3371780 via Zenodo API. Extracts 20 target files per genre (BossaNova, Funk, Rock, Singer-Songwriter). Writes MANIFEST.txt with SHA256 verification and CC-BY attribution. Idempotent (skips existing files with matching hashes).
+  - AudioAnalysisMetrics extensions: ProgressionMetrics (CSR at majMin vocabulary, median timing deviation, no-detection fraction), TempoMetricsExtended (tempoError, within5pct/10pct/20pct tolerances, halftime/doubletime error detection), KeyMetrics (exactMatch, relativeKeyMatch, rootMatch, ground truth vs detected comparison).
+  - GuitarSetProgressionTests, GuitarSetTempoTests, GuitarSetKeyInferenceTests: test suites for chord progressions (CSR frame-by-frame at 10ms), tempo estimation (from beat times), and key inference (chord-rich material only). Thresholds calibrated to literature baselines with explicit calibration-down rules.
+  - Security evaluation: `docs/security/phase-3-guitarset-evaluation.md` documents threat model (no code injection, safe unzip usage, JSONDecoder-only parsing).
+  - **Scope limitation:** Phase 3 measures key inference on chord-rich comping material only. MelodyKeyInference pitch-class fallback path NOT exercised. Do not claim general key-inference accuracy from Phase 3 results.
+  - Documentation: Fixtures/real-audio/guitarset/README.md with JAMS format spec, Harte notation guide, Zenodo citation, scope limitation.
+
+### Added
 - **Real-audio fixture integration (Phase 2.5, corrective):** GADA + TaylorNylon guitar recordings from legacy Cantus, 32+109 WAV files with ground-truth JSON sidecars. Replaces Phase 2's ineffective SoundFont synthetic approach.
   - Fixture sources: 32 GADA files (3 guitar models, 12 common chords, fingerstyle) + 109 TaylorNylon files (7 chord types, nylon classical timbre).
   - JSON sidecars encode single-chord ground truth (chord name, confidence=1.0) using GroundTruthCodable envelope.

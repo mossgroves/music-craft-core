@@ -297,4 +297,282 @@ struct AudioAnalysisMetrics {
             return "major"  // Default to major if no quality indicator
         }
     }
+
+    // MARK: - Progression Metrics (Phase 3 GuitarSet)
+
+    struct ProgressionMetrics {
+        /// Chord Symbol Recall at majMin vocabulary (root match only).
+        /// Frame-weighted metric at 10ms resolution: matching_frames / total_non-N_annotated_frames.
+        let majMinCSR: Double
+
+        /// Mean absolute time deviation (in seconds) between chord segment boundaries.
+        let medianTimingDeviationSec: TimeInterval
+
+        /// Fraction of annotated time with no chord detected (no-chord regions).
+        let noDetectionFraction: Double
+    }
+
+    /// Compare detected chord progression against ground truth GuitarSet data.
+    /// Uses frame-by-frame comparison at 10ms resolution (standard for music analysis).
+    /// CSR = Chord Symbol Recall (root match only, ignoring quality).
+    static func compareProgression(
+        detected: [MusicCraftCore.AudioExtractor.ChordSegment],
+        groundTruth: [GroundTruth.ChordSegment],
+        frameResolution: TimeInterval = 0.01  // 10ms
+    ) -> ProgressionMetrics {
+        guard !groundTruth.isEmpty else {
+            return ProgressionMetrics(
+                majMinCSR: 0.0,
+                medianTimingDeviationSec: 0.0,
+                noDetectionFraction: 0.0
+            )
+        }
+
+        // Calculate total duration (from ground truth)
+        let totalDuration = groundTruth.map { $0.duration }.reduce(0, +)
+        let frameCount = Int(ceil(totalDuration / frameResolution))
+
+        var matchingFrames = 0
+        var annotatedFrames = 0
+        var timingDeviations: [TimeInterval] = []
+
+        // Frame-by-frame comparison
+        for frameIdx in 0..<frameCount {
+            let frameTime = TimeInterval(frameIdx) * frameResolution
+
+            // Find ground truth chord at this time
+            var gtChord: GroundTruth.ChordSegment? = nil
+            for gtSeg in groundTruth {
+                if gtSeg.startTime <= frameTime && frameTime < gtSeg.endTime {
+                    gtChord = gtSeg
+                    break
+                }
+            }
+
+            if let gtChord = gtChord {
+                annotatedFrames += 1
+
+                // Find detected chord at this time
+                var detChord: MusicCraftCore.AudioExtractor.ChordSegment? = nil
+                for detSeg in detected {
+                    if detSeg.startTime <= frameTime && frameTime < detSeg.endTime {
+                        detChord = detSeg
+                        break
+                    }
+                }
+
+                if let detChord = detChord {
+                    // Check for root match
+                    let (rootMatch, _) = compareChordContent(gtChord.chord, detChord.chord.displayName)
+                    if rootMatch {
+                        matchingFrames += 1
+                    }
+
+                    // Track timing deviation for segment boundaries
+                    let gtMid = (gtChord.startTime + gtChord.endTime) / 2.0
+                    let detMid = (detChord.startTime + detChord.endTime) / 2.0
+                    timingDeviations.append(abs(gtMid - detMid))
+                }
+            }
+        }
+
+        let csrValue = annotatedFrames > 0 ? Double(matchingFrames) / Double(annotatedFrames) : 0.0
+        let medianTiming = timingDeviations.isEmpty ? 0.0 : {
+            let sorted = timingDeviations.sorted()
+            return sorted[sorted.count / 2]
+        }()
+        let noDetectionFrac = annotatedFrames > 0 ? Double(annotatedFrames - matchingFrames) / Double(annotatedFrames) : 0.0
+
+        return ProgressionMetrics(
+            majMinCSR: csrValue,
+            medianTimingDeviationSec: medianTiming,
+            noDetectionFraction: noDetectionFrac
+        )
+    }
+
+    // MARK: - Extended Tempo Metrics (Phase 3 GuitarSet)
+
+    struct TempoMetricsExtended {
+        /// Percentage error between detected BPM and ground truth: |detected - gt| / gt
+        let tempoError: Double
+
+        /// Within ±5% of ground truth BPM
+        let within5pct: Bool
+
+        /// Within ±10% of ground truth BPM
+        let within10pct: Bool
+
+        /// Within ±20% of ground truth BPM
+        let within20pct: Bool
+
+        /// Detector reported approximately HALF the true tempo (common halftime error).
+        /// True if abs(detected - 0.5*gt) / gt < 0.08
+        let isHalftime: Bool
+
+        /// Detector reported approximately DOUBLE the true tempo (common doubletime error).
+        /// True if abs(detected - 2.0*gt) / gt < 0.08
+        let isDoubletime: Bool
+    }
+
+    /// Compare detected tempo against ground truth with extended metrics for error modes.
+    static func compareTempoExtended(
+        detectedBPM: Double?,
+        groundTruthBPM: Double
+    ) -> TempoMetricsExtended {
+        guard let detected = detectedBPM, detected > 0 else {
+            return TempoMetricsExtended(
+                tempoError: 1.0,
+                within5pct: false,
+                within10pct: false,
+                within20pct: false,
+                isHalftime: false,
+                isDoubletime: false
+            )
+        }
+
+        let error = abs(detected - groundTruthBPM) / groundTruthBPM
+
+        let within5 = error <= 0.05
+        let within10 = error <= 0.10
+        let within20 = error <= 0.20
+
+        // Halftime error: detected ≈ 0.5 × gt
+        let halftimeError = abs(detected - 0.5 * groundTruthBPM) / groundTruthBPM
+        let isHalftime = halftimeError < 0.08
+
+        // Doubletime error: detected ≈ 2.0 × gt
+        let doubletimeError = abs(detected - 2.0 * groundTruthBPM) / groundTruthBPM
+        let isDoubletime = doubletimeError < 0.08
+
+        return TempoMetricsExtended(
+            tempoError: error,
+            within5pct: within5,
+            within10pct: within10,
+            within20pct: within20,
+            isHalftime: isHalftime,
+            isDoubletime: isDoubletime
+        )
+    }
+
+    // MARK: - Key Metrics (Phase 3 GuitarSet)
+
+    struct KeyMetrics {
+        /// Root and mode both correct (e.g., C major vs C major = true; C major vs A minor = false)
+        let exactMatch: Bool
+
+        /// Same pitch collection, allowing relative key (C major ↔ A minor)
+        let relativeKeyMatch: Bool
+
+        /// Correct root but wrong mode (e.g., C major vs C minor)
+        let rootMatch: Bool
+
+        /// The detected key (if any)
+        let detectedKey: String?
+
+        /// The ground truth key (from JAMS)
+        let groundTruthKey: String
+    }
+
+    /// Compare detected key against ground truth (parsed from JAMS key_mode namespace).
+    /// Ground truth JAMS format: "C:major", "A:minor", etc.
+    static func compareKey(
+        detected: MusicCraftCore.MusicalKey?,
+        groundTruthJAMS: String
+    ) -> KeyMetrics {
+        let detectedStr = detected.map { key in
+            let rootName: String
+            switch key.root {
+            case .C: rootName = "C"
+            case .Cs: rootName = "C#"
+            case .D: rootName = "D"
+            case .Ds: rootName = "D#"
+            case .E: rootName = "E"
+            case .F: rootName = "F"
+            case .Fs: rootName = "F#"
+            case .G: rootName = "G"
+            case .Gs: rootName = "G#"
+            case .A: rootName = "A"
+            case .As: rootName = "A#"
+            case .B: rootName = "B"
+            }
+
+            let modeName: String
+            switch key.mode {
+            case .major: modeName = "major"
+            case .minor: modeName = "minor"
+            }
+
+            return "\(rootName):\(modeName)"
+        }
+
+        // Parse ground truth JAMS key format: "C:major" or "A:minor"
+        let gtParts = groundTruthJAMS.split(separator: ":")
+        let gtRoot = gtParts.count > 0 ? String(gtParts[0]).lowercased() : "c"
+        let gtMode = gtParts.count > 1 ? String(gtParts[1]).lowercased() : "major"
+
+        // Check for exact match
+        let exactMatch = detectedStr == groundTruthJAMS.lowercased()
+
+        // Check for root match (same root, may differ in mode)
+        let rootMatch: Bool = {
+            guard let detStr = detectedStr else { return false }
+            let detParts = detStr.split(separator: ":")
+            return detParts.count > 0 && String(detParts[0]).lowercased() == gtRoot
+        }()
+
+        // Check for relative key match (same pitch collection)
+        let relativeKeyMatch: Bool = {
+            guard let detected = detected else { return exactMatch }
+
+            // Relative keys: C major ↔ A minor, G major ↔ E minor, etc.
+            // Relative minor is 3 semitones below the major (relative_minor_root = major_root - 3)
+            let relativeKeyTable: [MusicCraftCore.NoteName: MusicCraftCore.NoteName] = [
+                .C: .A,
+                .Cs: .As,
+                .D: .B,
+                .Ds: .Cs,
+                .E: .Cs,
+                .F: .D,
+                .Fs: .Ds,
+                .G: .E,
+                .Gs: .Fs,
+                .A: .Fs,
+                .As: .Gs,
+                .B: .Gs,
+            ]
+
+            let detectedRootStr = detected.root.displayName.replacingOccurrences(of: "♯", with: "#").lowercased()
+
+            // Same mode and same root
+            if gtMode.contains("major") && detected.mode == .major {
+                return detectedRootStr == gtRoot.lowercased()
+            } else if gtMode.contains("minor") && detected.mode == .minor {
+                return detectedRootStr == gtRoot.lowercased()
+            } else if gtMode.contains("major") && detected.mode == .minor {
+                // Detected minor is relative to gt major: check if detected.root is relative to gt.root
+                if let relativeMinor = relativeKeyTable[detected.root],
+                   relativeMinor.displayName.replacingOccurrences(of: "♯", with: "#").lowercased() == gtRoot.lowercased() {
+                    return true
+                }
+            } else if gtMode.contains("minor") && detected.mode == .major {
+                // Detected major is relative to gt minor: check if detected.root is relative major to gt.root
+                // Reverse lookup: find which major key has gtRoot as its relative minor
+                for (majorRoot, minorRoot) in relativeKeyTable {
+                    if minorRoot.displayName.replacingOccurrences(of: "♯", with: "#").lowercased() == gtRoot.lowercased() && majorRoot == detected.root {
+                        return true
+                    }
+                }
+            }
+
+            return false
+        }()
+
+        return KeyMetrics(
+            exactMatch: exactMatch,
+            relativeKeyMatch: relativeKeyMatch,
+            rootMatch: rootMatch,
+            detectedKey: detectedStr,
+            groundTruthKey: groundTruthJAMS
+        )
+    }
 }
