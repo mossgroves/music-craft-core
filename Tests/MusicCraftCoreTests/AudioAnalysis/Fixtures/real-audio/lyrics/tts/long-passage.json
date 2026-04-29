@@ -1,0 +1,142 @@
+{
+  "category" : "longPassage",
+  "id" : "long-passage",
+  "text" : "the summer air was still and warm the fields were golden in the evening light and somewhere in the distance church bells rang across the quiet valley",
+  "words" : [
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "the"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "summer"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "air"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "was"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "still"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "and"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "warm"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "the"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "fields"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "were"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "golden"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "in"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "the"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "evening"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "light"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "and"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "somewhere"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "in"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "the"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "distance"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "church"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "bells"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "rang"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "across"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "the"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "quiet"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "valley"
+    }
+  ]
+}

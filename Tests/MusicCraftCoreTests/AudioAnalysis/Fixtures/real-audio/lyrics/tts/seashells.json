@@ -1,0 +1,37 @@
+{
+  "category" : "phonetic",
+  "id" : "seashells",
+  "text" : "she sells seashells by the seashore",
+  "words" : [
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "she"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "sells"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "seashells"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "by"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "the"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "seashore"
+    }
+  ]
+}

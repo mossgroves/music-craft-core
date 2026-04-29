@@ -1,7 +1,7 @@
 import XCTest
 @testable import MusicCraftCore
 
-final class LyricsExtractorTests: XCTestCase {
+final class LyricsExtractorSyntheticTests: XCTestCase {
 
     func testTranscribedTokenConstruction() {
         // Structural test: validates TranscribedToken struct construction.

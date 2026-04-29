@@ -1,0 +1,52 @@
+{
+  "category" : "pangram",
+  "id" : "quick-brown-fox",
+  "text" : "the quick brown fox jumps over the lazy dog",
+  "words" : [
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "the"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "quick"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "brown"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "fox"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "jumps"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "over"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "the"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "lazy"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "dog"
+    }
+  ]
+}

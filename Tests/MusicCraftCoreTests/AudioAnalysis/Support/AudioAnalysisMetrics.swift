@@ -234,19 +234,102 @@ struct AudioAnalysisMetrics {
     }
 
     // MARK: - Lyric Metrics
+    // WER/CER definitions from jiwer: https://github.com/jitsi/jiwer
 
     struct LyricMetrics {
-        /// Percentage of transcribed words matching ground truth (case-insensitive).
+        /// Word Error Rate (1 - WER), where WER is Levenshtein distance over token sequences.
         let wordAccuracy: Double
 
-        /// Character error rate (Levenshtein distance / total characters).
+        /// Character Error Rate (Levenshtein distance on concatenated lowercased text).
         let characterErrorRate: Double
 
-        /// Percentage of word boundaries within ±100ms of ground truth.
-        let timingAccuracy: Double
+        /// Ratio of detected word count to ground truth word count (catches over/under-segmentation).
+        let wordCountRatio: Double
 
-        /// Mean confidence per word.
-        let confidenceAverage: Double
+        /// Mean absolute time deviation (seconds) between detected word onsets and ground truth starts.
+        /// Nil if either detected or ground truth has no timestamp information.
+        let timingMeanDeviationSec: TimeInterval?
+
+        /// Fraction of ground truth words with a detected token starting within tolerance.
+        /// Zero if either side has no timestamp information.
+        let timingMatchedFraction: Double
+    }
+
+    /// Compare transcribed lyrics against ground truth using WER, CER, and optional timing alignment.
+    /// Computes word accuracy via Levenshtein distance over normalized word sequences.
+    /// Handles missing timestamps by setting timing metrics to nil/0.
+    static func compareLyrics(
+        detected: [TranscribedToken],
+        groundTruth: [GroundTruth.WordAnnotation],
+        timingToleranceSec: TimeInterval = 0.1
+    ) -> LyricMetrics {
+        guard !groundTruth.isEmpty else {
+            return LyricMetrics(
+                wordAccuracy: 0.0,
+                characterErrorRate: 0.0,
+                wordCountRatio: Double(detected.count),
+                timingMeanDeviationSec: nil,
+                timingMatchedFraction: 0.0
+            )
+        }
+
+        // Normalize words for comparison
+        let detectedWords = detected.map { $0.text }
+        let detectedNormalized = normalizeForLyricComparison(detectedWords)
+        let groundTruthWords = groundTruth.map { $0.text }
+        let groundTruthNormalized = normalizeForLyricComparison(groundTruthWords)
+
+        // Compute WER (Word Error Rate)
+        let wordEditDistance = levenshteinDistance(detectedNormalized, groundTruthNormalized)
+        let wordAccuracy = max(0.0, 1.0 - Double(wordEditDistance) / Double(max(1, groundTruthNormalized.count)))
+
+        // Compute CER (Character Error Rate)
+        let detectedText = detectedNormalized.joined(separator: " ").lowercased()
+        let groundTruthText = groundTruthNormalized.joined(separator: " ").lowercased()
+        let charEditDistance = levenshteinDistance(Array(detectedText), Array(groundTruthText))
+        let characterErrorRate = Double(charEditDistance) / Double(max(1, groundTruthText.count))
+
+        // Word count ratio
+        let wordCountRatio = Double(detected.count) / Double(max(1, groundTruth.count))
+
+        // Timing alignment (if both have timestamps)
+        let gtHasTimestamps = groundTruth.contains { $0.startTime >= 0 }
+        let detHasTimestamps = detected.contains { $0.onsetTime > 0 }
+
+        var timingMeanDeviationSec: TimeInterval? = nil
+        var timingMatchedFraction: Double = 0.0
+
+        if gtHasTimestamps && detHasTimestamps {
+            // Simple alignment: for each GT word, find closest detected token
+            var timingDeviations: [TimeInterval] = []
+            var matchCount = 0
+
+            for gtWord in groundTruth {
+                if gtWord.startTime < 0 { continue }
+
+                let closestDet = detected.min { a, b in
+                    abs(a.onsetTime - gtWord.startTime) < abs(b.onsetTime - gtWord.startTime)
+                }
+
+                if let det = closestDet, abs(det.onsetTime - gtWord.startTime) <= timingToleranceSec {
+                    timingDeviations.append(abs(det.onsetTime - gtWord.startTime))
+                    matchCount += 1
+                }
+            }
+
+            if !timingDeviations.isEmpty {
+                timingMeanDeviationSec = timingDeviations.reduce(0, +) / Double(timingDeviations.count)
+            }
+            timingMatchedFraction = Double(matchCount) / Double(max(1, groundTruth.count))
+        }
+
+        return LyricMetrics(
+            wordAccuracy: wordAccuracy,
+            characterErrorRate: characterErrorRate,
+            wordCountRatio: wordCountRatio,
+            timingMeanDeviationSec: timingMeanDeviationSec,
+            timingMatchedFraction: timingMatchedFraction
+        )
     }
 
     // MARK: - Helper: Chord Content Comparison
@@ -574,5 +657,45 @@ struct AudioAnalysisMetrics {
             detectedKey: detectedStr,
             groundTruthKey: groundTruthJAMS
         )
+    }
+
+    // MARK: - Lyric Comparison Helpers
+
+    /// Compute Levenshtein (edit) distance between two sequences.
+    private static func levenshteinDistance<T: Equatable>(_ a: [T], _ b: [T]) -> Int {
+        let m = a.count
+        let n = b.count
+
+        if m == 0 { return n }
+        if n == 0 { return m }
+
+        // DP table: dp[i][j] = distance between a[0..<i] and b[0..<j]
+        var dp = Array(repeating: Array(repeating: 0, count: n + 1), count: m + 1)
+
+        for i in 0...m { dp[i][0] = i }
+        for j in 0...n { dp[0][j] = j }
+
+        for i in 1...m {
+            for j in 1...n {
+                let cost = a[i - 1] == b[j - 1] ? 0 : 1
+                dp[i][j] = min(
+                    dp[i - 1][j] + 1,      // deletion
+                    dp[i][j - 1] + 1,      // insertion
+                    dp[i - 1][j - 1] + cost  // substitution
+                )
+            }
+        }
+
+        return dp[m][n]
+    }
+
+    /// Normalize lyric text for comparison: lowercase, strip punctuation, split into words.
+    private static func normalizeForLyricComparison(_ words: [String]) -> [String] {
+        words.map { word in
+            word.lowercased()
+                .replacingOccurrences(of: "[^a-z0-9']", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+        }
+        .filter { !$0.isEmpty }
     }
 }

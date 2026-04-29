@@ -1,0 +1,17 @@
+{
+  "category" : "baseline",
+  "id" : "hello-world",
+  "text" : "hello world",
+  "words" : [
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "hello"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "world"
+    }
+  ]
+}

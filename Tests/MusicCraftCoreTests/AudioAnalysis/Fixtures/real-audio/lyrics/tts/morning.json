@@ -1,0 +1,42 @@
+{
+  "category" : "songlike",
+  "id" : "morning",
+  "text" : "I will be home before the morning",
+  "words" : [
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "I"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "will"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "be"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "home"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "before"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "the"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "morning"
+    }
+  ]
+}

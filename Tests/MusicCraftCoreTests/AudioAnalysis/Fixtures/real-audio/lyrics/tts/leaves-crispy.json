@@ -1,0 +1,42 @@
+{
+  "category" : "songlike",
+  "id" : "leaves-crispy",
+  "text" : "the leaves they were crispy and sere",
+  "words" : [
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "the"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "leaves"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "they"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "were"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "crispy"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "and"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "sere"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "category" : "songlike",
+  "id" : "coffee-spoons",
+  "text" : "I have measured out my life with coffee spoons",
+  "words" : [
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "I"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "have"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "measured"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "out"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "my"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "life"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "with"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "coffee"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "spoons"
+    }
+  ]
+}

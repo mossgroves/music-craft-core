@@ -1,0 +1,42 @@
+{
+  "category" : "songlike",
+  "id" : "streetlight",
+  "text" : "the streetlight hums the porch is warm",
+  "words" : [
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "the"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "streetlight"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "hums"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "the"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "porch"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "is"
+    },
+    {
+      "endTime" : -1,
+      "startTime" : -1,
+      "text" : "warm"
+    }
+  ]
+}
