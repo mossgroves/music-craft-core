@@ -1,6 +1,9 @@
 import Foundation
 import AVFoundation
 
+// Deferred — SoundFont rendering produces synthetic fixtures that don't exercise AudioExtractor's real-guitar tuning.
+// Retained for future command-line tool target. Real-audio testing uses GADA and TaylorNylon datasets.
+
 /// Generates SoundFont fixtures for Phase 2 testing infrastructure.
 struct FixtureGenerator {
     enum Error: LocalizedError {

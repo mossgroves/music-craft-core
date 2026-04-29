@@ -1,5 +1,8 @@
 import Foundation
 
+// Deferred — SoundFont rendering produces synthetic fixtures that don't exercise AudioExtractor's real-guitar tuning.
+// Retained for future command-line tool target. Real-audio testing uses GADA and TaylorNylon datasets.
+
 /// Standard guitar voicings as MIDI note arrays (6 strings, low E to high E).
 enum GuitarVoicing {
     // Major triads (open voicings)

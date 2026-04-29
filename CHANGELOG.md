@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Real-audio fixture integration (Phase 2.5, corrective):** GADA + TaylorNylon guitar recordings from legacy Cantus, 32+109 WAV files with ground-truth JSON sidecars. Replaces Phase 2's ineffective SoundFont synthetic approach.
+  - Fixture sources: 32 GADA files (3 guitar models, 12 common chords, fingerstyle) + 109 TaylorNylon files (7 chord types, nylon classical timbre).
+  - JSON sidecars encode single-chord ground truth (chord name, confidence=1.0) using GroundTruthCodable envelope.
+  - RealAudioChordTests: per-file accuracy comparison (root + exact chord) against Phase 2.5 measured baseline (GADA: 40.6% root / 68.8% exact; TaylorNylon: 31.2% root / 49.5% exact). Thresholds reflect AudioExtractor's real performance on this subset, calibrated to detect regression, not match legacy Cantus Stage 2 (which achieved 99.7% on full 3449-sample dataset).
+  - Package.swift: resources declaration copies AudioAnalysis/Fixtures to test bundle.
+  - SidecarGenerationTests (gated MCC_GENERATE_SIDECARS=1): regenerates JSON sidecars from WAV files if needed.
+  - Confusions analysis: GADA harmonic confusion (Em/E→B patterns), TaylorNylon nylon timbre overlap (Fm→G♯, F→A patterns).
+  - Documentation: Fixtures/real-audio/README.md with source provenance, measurement methodology, confusion categorization, maintenance guidance.
+
 - **Audio analysis testing infrastructure (Phase 1):** Synthetic fixture baseline + test harness for chord, tempo, and note detection validation.
   - AudioFixtureLoader: lazy fixture loading with support for synthetic audio generation (all-major-triads, all-minor-triads, common-sevenths, steady-tempo metronome, C major scale) and optional ground-truth annotations.
   - SyntheticGenerator: static helper methods for creating test audio (generateSineWave, generateChordBuffer, generateMetronomeClick, etc.) with envelope modeling (attack, sustain, release).

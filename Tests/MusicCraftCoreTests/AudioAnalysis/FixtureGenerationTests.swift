@@ -4,9 +4,9 @@ import XCTest
 final class FixtureGenerationTests: XCTestCase {
 
     func testGenerateAllFixtures() throws {
-        // Skip unless explicitly enabled
-        guard ProcessInfo.processInfo.environment["MCC_GENERATE_FIXTURES"] == "1" else {
-            throw XCTSkip("Fixture generation disabled. Set MCC_GENERATE_FIXTURES=1 to enable.")
+        // Skip unless SoundFont experiment is explicitly enabled
+        guard ProcessInfo.processInfo.environment["MCC_SOUNDFONT_EXPERIMENT"] == "1" else {
+            throw XCTSkip("SoundFont experiment opt-in required. Set MCC_SOUNDFONT_EXPERIMENT=1 to enable. Note: SoundFont-generated audio is not a valid baseline for AudioExtractor (see Phase 2.5 notes).")
         }
 
         // Output directory: Tests/MusicCraftCoreTests/AudioAnalysis/Fixtures/synthetic-soundfont

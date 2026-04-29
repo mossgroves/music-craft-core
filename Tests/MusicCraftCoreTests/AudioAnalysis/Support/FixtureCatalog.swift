@@ -1,5 +1,8 @@
 import Foundation
 
+// Deferred — SoundFont rendering produces synthetic fixtures that don't exercise AudioExtractor's real-guitar tuning.
+// Retained for future command-line tool target. Real-audio testing uses GADA and TaylorNylon datasets.
+
 /// Catalog of all SoundFont-based fixtures to generate for Phase 2 testing.
 struct FixtureCatalog {
     /// All single-chord fixtures.

@@ -2,6 +2,9 @@ import Foundation
 import AVFoundation
 import CoreAudio
 
+// Deferred — SoundFont rendering produces synthetic fixtures that don't exercise AudioExtractor's real-guitar tuning.
+// Retained for future command-line tool target. Real-audio testing uses GADA and TaylorNylon datasets.
+
 /// Offline SoundFont renderer using AVAudioUnitSampler with proper MIDI scheduling.
 /// Captures rendered output via tap on output node.
 struct SoundFontRenderer {

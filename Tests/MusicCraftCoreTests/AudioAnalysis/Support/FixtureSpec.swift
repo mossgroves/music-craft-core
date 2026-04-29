@@ -1,5 +1,8 @@
 import Foundation
 
+// Deferred — SoundFont rendering produces synthetic fixtures that don't exercise AudioExtractor's real-guitar tuning.
+// Retained for future command-line tool target. Real-audio testing uses GADA and TaylorNylon datasets.
+
 /// Specification for a single-chord fixture.
 struct ChordFixtureSpec {
     let chord: String           // e.g. "Am", "C", "G7"

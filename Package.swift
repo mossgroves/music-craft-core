@@ -8,6 +8,10 @@ let package = Package(
     dependencies: [],
     targets: [
         .target(name: "MusicCraftCore", resources: [.process("Resources")]),
-        .testTarget(name: "MusicCraftCoreTests", dependencies: ["MusicCraftCore"])
+        .testTarget(
+            name: "MusicCraftCoreTests",
+            dependencies: ["MusicCraftCore"],
+            resources: [.copy("AudioAnalysis/Fixtures")]
+        )
     ]
 )
