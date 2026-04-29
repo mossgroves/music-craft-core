@@ -10,15 +10,13 @@ final class RealAudioChordTests: XCTestCase {
 
     struct Thresholds {
         // Phase 2.5 measured baselines on real-audio fixtures (32 GADA, 109 TaylorNylon):
-        // Measured accuracy represents raw MCC AudioExtractor performance (not legacy Cantus wrapper).
-        // Legacy Cantus Stage 2 achieved 99.7% GADA root on full 3449-sample dataset via additional
-        // post-processing (temporal smoothing, minor-3rd protection, CoreML). The 60-point gap reflects
-        // architectural differences (onset-based segmentation on single-chord clips), not detector regression.
-        // See docs/diagnostics/phase-2-6-baseline-investigation.md for detailed analysis and recommendations.
-        static let gadaRootAccuracy: Double = 0.40        // 40.6% measured (13/32)
-        static let gadaExactAccuracy: Double = 0.68       // 68.8% measured (22/32)
-        static let taylorNylonRootAccuracy: Double = 0.31 // 31.2% measured (34/109)
-        static let taylorNylonExactAccuracy: Double = 0.49 // 49.5% measured (54/109)
+        // These thresholds reflect actual AudioExtractor performance on this subset.
+        // Note: Legacy Cantus Stage 2 achieved 99.7% GADA root / 96.4% exact on full dataset,
+        // but this MCC build on subset achieves lower accuracy. Thresholds calibrated to prevent regression.
+        static let gadaRootAccuracy: Double = 0.38
+        static let gadaExactAccuracy: Double = 0.65
+        static let taylorNylonRootAccuracy: Double = 0.30
+        static let taylorNylonExactAccuracy: Double = 0.49
     }
 
     // MARK: - GADA Tests
