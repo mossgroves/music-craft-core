@@ -9,13 +9,6 @@
 # When you intentionally add a new failing test (Phase 2.7 / 3.2 style),
 # ADD its entry here in the same commit with a comment citing the phase / reason.
 
-# Phase 2.7 — ChordDetector single-chord accuracy
-# Ground truth: GADA 40.6% root, TaylorNylon 31.2% root
-# Thresholds set to 95% and 80% to surface the product issue and demand a fix path.
-# Stage 2 legacy baseline remains the target (99.7% GADA root, 88.1% TaylorNylon root).
-MusicCraftCoreTests.RealAudioChordTests/testGADAChordAccuracy
-MusicCraftCoreTests.RealAudioChordTests/testTaylorNylonChordAccuracy
-
 # Phase 3.2 — GuitarSet measurements (chord progression CSR below threshold)
 # Ground truth: Mean CSR 37.5% across 5 fixtures (0.8% to 59.4% range)
 # Threshold set to 50% to surface chord accuracy limitation (same root cause as Phase 2.7).
