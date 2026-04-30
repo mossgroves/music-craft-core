@@ -53,6 +53,10 @@ Similar to Cantus/CLAUDE.md:
 - Any open questions that Chris has not resolved
 - **Integration of third-party code or algorithms without security review.** Before porting, adapting, or integrating any external code (academic libraries, reference implementations, algorithm papers), produce a security analysis document covering: (1) code injection vectors (eval, exec, compile, __import__, pickle, subprocess, os.system, open); (2) ReDoS vulnerabilities in regex patterns; (3) buffer/array handling and bounds safety; (4) dependency analysis and transitive risks; (5) cryptographic or sensitive data handling; (6) exception handling design; (7) known CVEs or security advisories. Classify as SAFE TO PORT with specific Swift adaptation recommendations, or UNSAFE with reasons. File the analysis in /tmp/ or docs/security/ and link from the implementing commit. Examples: mir_eval chord validation, external pitch detection references, DSP algorithm implementations.
 
+## Phase Discipline
+
+Follow `mossgroves-lore/foundation/MOSSGROVE-LORE.md` Phase Discipline section. Phase reports use the template at `.claude/phase-report-template.md` (copied from Lore for proximity; Lore is source of truth if they diverge).
+
 ## Grounding and Assumption Discipline
 
 MCC follows the portfolio-wide grounding protocol in mossgroves/lore foundation/MOSSGROVE-GROUNDING.md. Every non-trivial claim Claude makes — about MCC code, public API shape, shipped versions, or consumer-project (Sanctuary, Guitar Atlas) state — anchors to a file read, git log output, or tool result produced in the current session. Claims that are not grounded are labeled as inference.
