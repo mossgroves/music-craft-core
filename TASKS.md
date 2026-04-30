@@ -6,7 +6,9 @@
 
 ## Next Up
 
-1. **0.0.9.1 Patch Release (Real-Audio Fixtures)** — Bundle deferred real-audio fixtures from both 0.0.8 and 0.0.9 into one combined fixture release. Ground-truth evaluation for AudioExtractor (chord detection, key inference, melodic contour on live recordings) and BeatTracker/TempoEstimator (beat accuracy, tempo estimation on real audio). Coordinate with Sanctuary and Cantus production feedback to validate algorithms on their use cases.
+1. **LyricsExtractor on-device measurement (Phase 5 device test)** — Run LyricsExtractorRealAudioTests on iPhone 15 Pro Max during next device test session. TTS fixtures already generated and on disk. Single-session task: open test target in Xcode, grant speech recognition permission when prompted, capture per-fixture output and aggregate metrics, apply 15pp calibration rule against literature baseline (90–95% word accuracy on clean dictation), commit threshold decision. No infrastructure changes required.
+
+2. **0.0.9.1 Patch Release (Real-Audio Fixtures)** — Bundle deferred real-audio fixtures from both 0.0.8 and 0.0.9 into one combined fixture release. Ground-truth evaluation for AudioExtractor (chord detection, key inference, melodic contour on live recordings) and BeatTracker/TempoEstimator (beat accuracy, tempo estimation on real audio). Coordinate with Sanctuary and Cantus production feedback to validate algorithms on their use cases.
    - **Tautology fix in TempoEstimatorTests:** testEstimateTempoFromBeatsMultiple (line 20–26) currently asserts `XCTAssertGreaterThanOrEqual(tempos.count, 0)` — always passes. Replace with real BPM assertion when real-audio fixtures land: verify estimated tempo is within tolerance of expected value (e.g., 120 BPM input → estimated BPM ∈ [110, 130]).
 
 2. **Consumer Adoption Sweeps** — Cascade 0.0.9 adoption to active consumer projects:

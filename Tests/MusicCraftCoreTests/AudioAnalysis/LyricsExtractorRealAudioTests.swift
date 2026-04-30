@@ -21,12 +21,6 @@ final class LyricsExtractorRealAudioTests: XCTestCase {
     }
 
     func testLyricsExtractorAccuracy() async throws {
-        #if os(macOS)
-        // Speech recognition on headless/CLI macOS is unreliable; skip for now
-        // Fixtures are generated and can be tested on real devices or in Xcode
-        throw XCTSkip("Speech recognition testing deferred to device/Xcode environment (macOS CLI limitation)")
-        #endif
-
         // Check speech recognition availability
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")) else {
             throw XCTSkip("SFSpeechRecognizer unavailable for en-US locale")
