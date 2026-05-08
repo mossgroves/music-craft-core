@@ -86,7 +86,7 @@ struct FixtureGenerator {
         sampleRate: Double
     ) throws -> ([Float], GroundTruth) {
         // Generate MIDI events for the chord voicing
-        let notes = spec.voicing.midiNotes
+        let notes = midiNotesForVoicing(spec.voicing)
         let attackTime = spec.attackOffset
         let releaseTime = spec.duration
 
@@ -124,8 +124,7 @@ struct FixtureGenerator {
 
         for (chordName, chordBeats) in spec.chords {
             let chordDuration = chordBeats * beatDuration
-            let voicing = voicingForChord(chordName)
-            let notes = voicing.midiNotes
+            let notes = midiNotesForChordName(chordName)
 
             // All notes on at current time
             for note in notes {
@@ -196,24 +195,46 @@ struct FixtureGenerator {
 
     // MARK: - Helpers
 
-    private static func voicingForChord(_ chordName: String) -> GuitarVoicing {
+    private static func midiNotesForVoicing(_ voicing: String) -> [UInt8] {
+        // Legacy voicing name to MIDI notes mapping (stub for deferred SoundFont fixtures)
+        let voicingMap: [String: [UInt8]] = [
+            "cMajor": [48, 52, 55, 60, 64, 72],
+            "cMinor": [48, 51, 55, 60, 63, 72],
+            "dMajor": [50, 57, 62, 66, 74, 50],
+            "dMinor": [50, 57, 62, 65, 74, 50],
+            "eMajor": [40, 47, 52, 56, 59, 64],
+            "eMinor": [40, 47, 52, 55, 59, 64],
+            "fMajor": [41, 48, 53, 57, 60, 65],
+            "gMajor": [43, 47, 50, 55, 59, 67],
+            "gMinor": [43, 46, 50, 55, 58, 67],
+            "aMajor": [45, 52, 57, 61, 64, 69],
+            "aMinor": [45, 52, 57, 60, 64, 69],
+            "bMinor": [47, 54, 59, 62, 66, 71],
+            "cMaj7": [48, 52, 55, 59, 64, 72],
+            "cMin7": [48, 51, 55, 58, 63, 72],
+            "c7": [48, 52, 55, 58, 64, 72],
+        ]
+        return voicingMap[voicing] ?? [48, 52, 55, 60, 64, 72]
+    }
+
+    private static func midiNotesForChordName(_ chordName: String) -> [UInt8] {
         switch chordName.lowercased() {
-        case "c": return .cMajor
-        case "cm": return .cMinor
-        case "d": return .dMajor
-        case "dm": return .dMinor
-        case "e": return .eMajor
-        case "em": return .eMinor
-        case "f": return .fMajor
-        case "g": return .gMajor
-        case "gm": return .gMinor
-        case "a": return .aMajor
-        case "am": return .aMinor
-        case "b", "bm": return .bMinor
-        case "cmaj7": return .cMaj7
-        case "cmin7", "cm7": return .cMin7
-        case "c7": return .c7
-        default: return .cMajor
+        case "c": return [48, 52, 55, 60, 64, 72]
+        case "cm": return [48, 51, 55, 60, 63, 72]
+        case "d": return [50, 57, 62, 66, 74, 50]
+        case "dm": return [50, 57, 62, 65, 74, 50]
+        case "e": return [40, 47, 52, 56, 59, 64]
+        case "em": return [40, 47, 52, 55, 59, 64]
+        case "f": return [41, 48, 53, 57, 60, 65]
+        case "g": return [43, 47, 50, 55, 59, 67]
+        case "gm": return [43, 46, 50, 55, 58, 67]
+        case "a": return [45, 52, 57, 61, 64, 69]
+        case "am": return [45, 52, 57, 60, 64, 69]
+        case "b", "bm": return [47, 54, 59, 62, 66, 71]
+        case "cmaj7": return [48, 52, 55, 59, 64, 72]
+        case "cmin7", "cm7": return [48, 51, 55, 58, 63, 72]
+        case "c7": return [48, 52, 55, 58, 64, 72]
+        default: return [48, 52, 55, 60, 64, 72]
         }
     }
 

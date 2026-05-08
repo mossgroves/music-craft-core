@@ -6,14 +6,14 @@ import Foundation
 /// Specification for a single-chord fixture.
 struct ChordFixtureSpec {
     let chord: String           // e.g. "Am", "C", "G7"
-    let voicing: GuitarVoicing
+    let voicing: String         // Placeholder for deferred GuitarVoicing integration
     let duration: TimeInterval
     let velocity: UInt8
     let attackOffset: TimeInterval
 
     init(
         chord: String,
-        voicing: GuitarVoicing,
+        voicing: String,
         duration: TimeInterval = 4.0,
         velocity: UInt8 = 100,
         attackOffset: TimeInterval = 0.0
@@ -31,7 +31,7 @@ struct ProgressionFixtureSpec {
     let name: String                        // e.g. "I-IV-V-I in C"
     let chords: [(chord: String, duration: TimeInterval)]  // Chord + time
     let tempo: Double                       // BPM
-    let voicing: GuitarVoicing
+    let voicing: String                     // Placeholder for deferred GuitarVoicing integration
     let velocity: UInt8
     let key: String                         // Tonic note for Roman numeral mapping
 
@@ -39,7 +39,7 @@ struct ProgressionFixtureSpec {
         name: String,
         chords: [(String, TimeInterval)],
         tempo: Double,
-        voicing: GuitarVoicing,
+        voicing: String,
         velocity: UInt8 = 100,
         key: String
     ) {

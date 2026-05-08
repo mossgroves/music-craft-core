@@ -7,22 +7,22 @@ import Foundation
 struct FixtureCatalog {
     /// All single-chord fixtures.
     static let singleChordFixtures: [ChordFixtureSpec] = {
-        let voicings: [(String, GuitarVoicing)] = [
-            ("C", .cMajor),
-            ("Cm", .cMinor),
-            ("D", .dMajor),
-            ("Dm", .dMinor),
-            ("E", .eMajor),
-            ("Em", .eMinor),
-            ("F", .fMajor),
-            ("G", .gMajor),
-            ("Gm", .gMinor),
-            ("A", .aMajor),
-            ("Am", .aMinor),
-            ("B", .bMinor),  // Bm voicing used for B due to complexity of open B major
-            ("Cmaj7", .cMaj7),
-            ("Cmin7", .cMin7),
-            ("C7", .c7),
+        let voicings: [(String, String)] = [
+            ("C", "cMajor"),
+            ("Cm", "cMinor"),
+            ("D", "dMajor"),
+            ("Dm", "dMinor"),
+            ("E", "eMajor"),
+            ("Em", "eMinor"),
+            ("F", "fMajor"),
+            ("G", "gMajor"),
+            ("Gm", "gMinor"),
+            ("A", "aMajor"),
+            ("Am", "aMinor"),
+            ("B", "bMinor"),
+            ("Cmaj7", "cMaj7"),
+            ("Cmin7", "cMin7"),
+            ("C7", "c7"),
         ]
 
         return voicings.map { chord, voicing in
@@ -60,7 +60,7 @@ struct FixtureCatalog {
                     name: "\(name) @ \(Int(tempo))BPM",
                     chords: chords,
                     tempo: tempo,
-                    voicing: .cMajor,  // Placeholder; will be voicing-mapped per chord
+                    voicing: "cMajor",
                     key: key
                 )
                 fixtures.append(spec)

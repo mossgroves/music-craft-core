@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-05-08 (UNRELEASED — awaiting Chris review before tag)
+
+### Added
+- **Instruments/Guitar subsystem (new):** Voicing library, capo calculator, and voicing scoring for chord accompaniment suggestions.
+  - GuitarTuning: 6 standard tunings catalog (Standard, Drop D, Open D, Open G, DADGAD, CGDGBD) with semitone intervals and reference frequencies.
+  - VoicingPosition: Fretboard shape data (frets, fingers, barres, baseFret, requiresCapo) with Codable legacy field mapping (capo → requiresCapo).
+  - GuitarVoicing: Position + chord + tuning metadata with computed displayName.
+  - VoicingLibrary: Chord → ranked voicings lookup. Standard tuning only in 0.0.10; per-tuning data deferred to 0.0.11.
+  - CapoCalculator: Target key → capo position suggestions with diatonic-chord-richness scoring. Mode-preserved (major → major, minor → minor).
+  - VoicingScore: Composable voicing scoring with fingeringDifficulty, openness, positionScore, spanScore, and weighted totalScore. Default criteria: 0.4 difficulty, 0.3 openness, 0.2 position, 0.1 span (tuned for singer-songwriter use case).
+  - guitar_voicings.json: Curated resource (72 chord-name keys × 2–3 voicings) ported from legacy Cantus with rank 1 (open), rank 2 (barre), rank 3 (alternate for easy keys) selection.
+  - Test coverage: GuitarTuningTests, VoicingPositionTests, GuitarVoicingTests, VoicingLibraryTests, CapoCalculatorTests, VoicingScoreTests. All passing.
+  - Enables Sanctuary slice 9.3 (vocal harmony suggestions): sung melody → inferred key → diatonic chord candidates → tappable voicings with capo positions.
+
+### Known Limitations (0.0.10)
+- Diminished and augmented voicings not bundled (diatonic gaps for vii° major / ii° minor).
+- Non-standard tunings return empty from VoicingLibrary (per-tuning data deferred to 0.0.11).
+- Cross-mode capo mapping (relative major↔minor) deferred to 0.0.11.
+- Chord substitution suggestions not implemented.
+- Left-handed mirroring not implemented.
+
+### Tier 1 Discipline
+- New subsystem with multiple public types and new architecture pattern (Instruments/Guitar/).
+- Diagnosis provided in development session; implementation completed; awaiting Chris review before tagging.
+- Phase reports use canonical template; Capability-Context Fit audit confirmed fit for Sanctuary slice 9.3 consumption.
+
 ### Added
 - **Phase 3 GuitarSet integration test infrastructure:** Real-audio testing on polyphonic multi-chord guitar excerpts with JAMS annotations.
   - JAMSParser: minimal Swift JSON parser for JAMS (chord_harte, beat, key_mode namespaces only). Harte notation translator (e.g., `A:min` → `Am`). Scope-limited to GuitarSet files; no external dependencies.
