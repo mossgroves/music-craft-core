@@ -25,6 +25,8 @@ foundation/MOSSGROVE-GROUNDING.md for grounding and assumption discipline — la
 
 foundation/MOSSGROVE-CAPABILITY-FIT.md for cross-component integration audit discipline.
 
+foundation/MOSSGROVE-SESSION-REPORTS.md for Claude Code session report structure and verification discipline.
+
 ## Current Development Stage
 
 **Completed: Music Theory (0.0.2–0.0.3) and DSP (0.0.4–0.0.5)**
