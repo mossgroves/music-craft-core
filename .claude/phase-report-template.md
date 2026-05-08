@@ -22,6 +22,7 @@ For measurement phases: per-target numbers, threshold comparison per the 15-poin
 - **Measurement output:** numbers, not "tests pass"
 - **Falsification test:** what would prove this completion claim wrong
 - **Shared-signal changes:** any edit to cross-project log, BACKLOG, allowlist, outbox, with source-code change that justifies it. If no source-code change, the edit is suspect.
+- **Capability-context audit run** for any cross-boundary integration in this phase. Either: (a) audit confirmed fit and is recorded above, or (b) audit surfaced mismatch and the phase plan was revised.
 
 ## Next
 

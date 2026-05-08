@@ -23,6 +23,8 @@ foundation/MOSSGROVE-FORGE.md for lifecycle stages and release readiness.
 
 foundation/MOSSGROVE-GROUNDING.md for grounding and assumption discipline — labeling inference, verifying claims, auditing peer outputs.
 
+foundation/MOSSGROVE-CAPABILITY-FIT.md for cross-component integration audit discipline.
+
 ## Current Development Stage
 
 **Completed: Music Theory (0.0.2–0.0.3) and DSP (0.0.4–0.0.5)**
