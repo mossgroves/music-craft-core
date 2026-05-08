@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.0.10] - 2026-05-08 (UNRELEASED — awaiting Chris review before tag)
+## [0.0.10] - 2026-05-08
 
 ### Added
 - **Instruments/Guitar subsystem (new):** Voicing library, capo calculator, and voicing scoring for chord accompaniment suggestions.
@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tier 1 Discipline
 - New subsystem with multiple public types and new architecture pattern (Instruments/Guitar/).
-- Diagnosis provided in development session; implementation completed; awaiting Chris review before tagging.
+- Released after Chris review of design spec, implementation, and post-Phase-B drift acknowledgments (rank-3 voicing scope expansion, filtered-test masquerade fix-forward in commit 9a2b61c).
 - Phase reports use canonical template; Capability-Context Fit audit confirmed fit for Sanctuary slice 9.3 consumption.
 
 ### Added
