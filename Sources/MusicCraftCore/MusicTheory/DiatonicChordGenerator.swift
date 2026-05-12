@@ -42,6 +42,15 @@ public struct RelatedKeys {
 public enum DiatonicChordGenerator {
 
     /// Generate the seven diatonic chords for a key with proper enharmonic spelling.
+    ///
+    /// Music-theory derived; **not** audio detection output. The same `MusicalKey`
+    /// always yields the same seven `DiatonicChordEntry` items regardless of any
+    /// audio that may have produced the key. Callers building UI should not present
+    /// these as "chords heard" — they are "chords that fit this key."
+    ///
+    /// Use this for capo math, voicing-library lookups, music-theory analysis, and
+    /// any other key-derived enumeration. For actual chord detection, see
+    /// `AudioExtractor.Result.chordSegments`.
     public static func generate(for key: MusicalKey) -> [DiatonicChordEntry] {
         let rootLetter = letterName(for: key.root, in: key)
         let intervals = key.scaleIntervals
