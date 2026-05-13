@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10.1] - 2026-05-12
+
+### Fixed
+- **LyricsExtractor multi-hypothesis flattening:** `transcribe(...)` previously included every alternative hypothesis from `SFSpeechRecognitionResult.transcriptions` via `flatMap`, producing 3x-duplicated transcripts on songs with multiple plausible interpretations (Sanctuary 2026-05-12 device test, 32s vocal capture). Fix: take only `result.transcriptions.first?.segments`. Single-hypothesis return is the correct semantic for the current consumer surface; alternatives can be exposed via a separate entry point in a future release if needed.
+- **LyricsExtractor long-buffer truncation:** One-shot `append+endAudio` on a single full-buffer `AVAudioPCMBuffer` truncated clips longer than ~30s (Sanctuary earlier device test, 56s capture transcribed only ~25s). Fix: slice the input buffer into 1-second chunks and `append` each as a separate `AVAudioPCMBuffer` before calling `endAudio`. Keeps the recognizer's stream engaged across the full duration.
+
+### Public API
+- No changes. `LyricsExtractor.transcribe(...)` signature, `Configuration` struct, `SpeechFrameworkError` cases, and `TranscribedToken` shape are identical to 0.0.10.
+
+### Tests
+- `testSingleHypothesisShape` asserts monotonic onset times on the longest available TTS fixture (regression for the `flatMap` bug).
+- `testFullDurationCoverage` concatenates the longest TTS fixture to build a ≥30s buffer and asserts the last token ends within 5s of the buffer end (regression for the truncation bug).
+- Both tests skip on macOS / when SFSpeechRecognizer is unavailable, matching the existing `testLyricsExtractorAccuracy` on-device guard.
+
+See `specs/0.0.10.1-lyrics-extractor-fix.md` for full diagnosis and design rationale.
+
 ## [0.0.10] - 2026-05-08
 
 ### Added

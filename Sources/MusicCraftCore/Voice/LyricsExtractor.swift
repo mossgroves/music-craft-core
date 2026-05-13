@@ -37,6 +37,11 @@ public enum LyricsExtractor {
         return try await transcribeWithSFSpeechRecognizer(buffer: buffer, sampleRate: sampleRate, recognizer: recognizer, configuration: configuration)
     }
 
+    /// Chunk size for streaming append to SFSpeechAudioBufferRecognitionRequest.
+    /// One-second chunks keep the recognizer's stream engaged on long clips; values
+    /// between 0.5s and 2.0s are equivalent in observed behavior.
+    private static let chunkSeconds: Double = 1.0
+
     private static func transcribeWithSFSpeechRecognizer(
         buffer: [Float],
         sampleRate: Double,
@@ -47,17 +52,29 @@ public enum LyricsExtractor {
             throw SpeechFrameworkError.frameworkUnavailable
         }
 
-        guard let audioBuffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: AVAudioFrameCount(buffer.count)) else {
-            throw SpeechFrameworkError.frameworkUnavailable
-        }
-
-        audioBuffer.floatChannelData?[0].update(from: buffer, count: buffer.count)
-        audioBuffer.frameLength = AVAudioFrameCount(buffer.count)
-
         return try await withCheckedThrowingContinuation { continuation in
             let request = SFSpeechAudioBufferRecognitionRequest()
             request.shouldReportPartialResults = false
-            request.append(audioBuffer)
+
+            let chunkFrames = max(1, Int(chunkSeconds * sampleRate))
+            var offset = 0
+            while offset < buffer.count {
+                let end = min(offset + chunkFrames, buffer.count)
+                let frameCount = end - offset
+
+                guard let chunkBuffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: AVAudioFrameCount(frameCount)) else {
+                    continuation.resume(throwing: SpeechFrameworkError.frameworkUnavailable)
+                    return
+                }
+
+                buffer.withUnsafeBufferPointer { bufferPtr in
+                    chunkBuffer.floatChannelData?[0].update(from: bufferPtr.baseAddress! + offset, count: frameCount)
+                }
+                chunkBuffer.frameLength = AVAudioFrameCount(frameCount)
+
+                request.append(chunkBuffer)
+                offset = end
+            }
             request.endAudio()
 
             recognizer.recognitionTask(with: request) { result, error in
@@ -71,15 +88,13 @@ public enum LyricsExtractor {
                     return
                 }
 
-                let tokens = result.transcriptions.flatMap { transcription in
-                    transcription.segments.map { segment in
-                        TranscribedToken(
-                            text: segment.substring,
-                            onsetTime: segment.timestamp,
-                            duration: segment.duration,
-                            confidence: nil
-                        )
-                    }
+                let tokens = (result.transcriptions.first?.segments ?? []).map { segment in
+                    TranscribedToken(
+                        text: segment.substring,
+                        onsetTime: segment.timestamp,
+                        duration: segment.duration,
+                        confidence: nil
+                    )
                 }
 
                 continuation.resume(returning: tokens)

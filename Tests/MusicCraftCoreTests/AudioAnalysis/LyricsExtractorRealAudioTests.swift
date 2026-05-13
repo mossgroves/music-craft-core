@@ -150,6 +150,121 @@ final class LyricsExtractorRealAudioTests: XCTestCase {
             "Max CER \(String(format: "%.1f%%", maxCER * 100)) exceeds threshold \(String(format: "%.1f%%", Thresholds.characterErrorRateMax * 100))"
         )
     }
+
+    /// 0.0.10.1 regression: single-hypothesis return produces monotonic onset times.
+    /// Pre-fix `result.transcriptions.flatMap { ... }` includes every alternative hypothesis,
+    /// producing overlapping/repeating onset times across the hypothesis groups. The fix
+    /// returns only `result.transcriptions.first`, guaranteeing monotonic timing.
+    func testSingleHypothesisShape() async throws {
+        #if os(macOS)
+        throw XCTSkip("LyricsExtractor on-device test requires iOS.")
+        #endif
+
+        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")),
+              recognizer.isAvailable else {
+            throw XCTSkip("SFSpeechRecognizer unavailable.")
+        }
+
+        let authStatus = SFSpeechRecognizer.authorizationStatus()
+        if authStatus == .denied || authStatus == .restricted {
+            throw XCTSkip("Speech recognition permission denied.")
+        }
+        if authStatus == .notDetermined {
+            let ok = await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization { status in
+                    continuation.resume(returning: status == .authorized)
+                }
+            }
+            guard ok else { throw XCTSkip("Speech recognition authorization denied.") }
+        }
+
+        let fixtures = try LyricFixture.all()
+        guard let longest = fixtures.max(by: { ($0.words.last?.endTime ?? 0) < ($1.words.last?.endTime ?? 0) }) else {
+            throw XCTSkip("No TTS fixtures available.")
+        }
+
+        let (samples, sampleRate) = try longest.loadAudio()
+        let tokens = try await LyricsExtractor.transcribe(
+            buffer: samples,
+            sampleRate: sampleRate,
+            locale: "en-US"
+        )
+
+        guard tokens.count >= 2 else {
+            throw XCTSkip("Fixture too short to assert monotonicity (\(tokens.count) tokens).")
+        }
+
+        for i in 1..<tokens.count {
+            XCTAssertGreaterThanOrEqual(
+                tokens[i].onsetTime,
+                tokens[i - 1].onsetTime,
+                "Token onset times must be non-decreasing (single-hypothesis shape). " +
+                "Token \(i - 1) at \(tokens[i - 1].onsetTime)s precedes token \(i) at \(tokens[i].onsetTime)s — " +
+                "regression: alternative hypotheses being flattened into the stream."
+            )
+        }
+    }
+
+    /// 0.0.10.1 regression: chunked streaming append covers the full buffer duration.
+    /// Pre-fix one-shot append+endAudio on a single large buffer truncates long clips
+    /// (~30s+). The fix slices into 1-second chunks and appends each before endAudio().
+    func testFullDurationCoverage() async throws {
+        #if os(macOS)
+        throw XCTSkip("LyricsExtractor on-device test requires iOS.")
+        #endif
+
+        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")),
+              recognizer.isAvailable else {
+            throw XCTSkip("SFSpeechRecognizer unavailable.")
+        }
+
+        let authStatus = SFSpeechRecognizer.authorizationStatus()
+        if authStatus == .denied || authStatus == .restricted {
+            throw XCTSkip("Speech recognition permission denied.")
+        }
+        if authStatus == .notDetermined {
+            let ok = await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization { status in
+                    continuation.resume(returning: status == .authorized)
+                }
+            }
+            guard ok else { throw XCTSkip("Speech recognition authorization denied.") }
+        }
+
+        // Use the longest available fixture and concatenate it 3x to build a ≥30s buffer.
+        let fixtures = try LyricFixture.all()
+        guard let longest = fixtures.max(by: { ($0.words.last?.endTime ?? 0) < ($1.words.last?.endTime ?? 0) }) else {
+            throw XCTSkip("No TTS fixtures available.")
+        }
+
+        let (samples, sampleRate) = try longest.loadAudio()
+        let repeatCount = max(1, Int(ceil(30.0 / (Double(samples.count) / sampleRate))))
+        var concatenated: [Float] = []
+        concatenated.reserveCapacity(samples.count * repeatCount)
+        for _ in 0..<repeatCount {
+            concatenated.append(contentsOf: samples)
+        }
+        let totalDuration = Double(concatenated.count) / sampleRate
+
+        let tokens = try await LyricsExtractor.transcribe(
+            buffer: concatenated,
+            sampleRate: sampleRate,
+            locale: "en-US"
+        )
+
+        guard let lastToken = tokens.last else {
+            XCTFail("Expected non-empty transcription on \(totalDuration)s concatenated TTS audio")
+            return
+        }
+
+        let coveredEnd = lastToken.onsetTime + lastToken.duration
+        XCTAssertGreaterThanOrEqual(
+            coveredEnd,
+            totalDuration - 5.0,
+            "Last token ends at \(coveredEnd)s but buffer is \(totalDuration)s — " +
+            "regression: streaming append should cover the full duration within ~5s."
+        )
+    }
 }
 
 // MARK: - String Extension for Formatting
