@@ -58,9 +58,11 @@ final class BeatTrackerTests: XCTestCase {
 
     func testConfigurationConstruction() {
         // Structural: Configuration can be created with defaults.
+        // 0.0.11: defaults lowered to 1024/512 to match the spectral-flux onset detector's
+        // per-frame granularity (previously 2048/1024 driving an RMS-autocorrelation pipeline).
         let config = BeatTracker.Configuration()
-        XCTAssertEqual(config.onsetWindowSize, 2048)
-        XCTAssertEqual(config.onsetHopSize, 1024)
+        XCTAssertEqual(config.onsetWindowSize, 1024)
+        XCTAssertEqual(config.onsetHopSize, 512)
         XCTAssertEqual(config.minBeatPeriodMs, 300)
         XCTAssertEqual(config.maxBeatPeriodMs, 3000)
         XCTAssertEqual(config.minAutocorrPeak, 0.3)
@@ -90,8 +92,9 @@ final class BeatTrackerTests: XCTestCase {
 
     func testConfigurationDefault() {
         // Structural: Configuration.default is available.
+        // 0.0.11: window size lowered from 2048 to 1024 (see testConfigurationConstruction).
         let config = BeatTracker.Configuration.default
-        XCTAssertEqual(config.onsetWindowSize, 2048)
+        XCTAssertEqual(config.onsetWindowSize, 1024)
     }
 
     func testConfigurationSendable() {

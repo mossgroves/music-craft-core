@@ -33,29 +33,30 @@ public enum TempoEstimator {
 
     /// Tuning parameters for tempo estimation.
     public struct Configuration: Equatable, Hashable, Sendable {
-        /// Onset detection window size (samples). Used only if buffer is provided. Default: 2048.
+        /// STFT window size (samples) for the spectral-flux onset detector used by the buffer path.
+        /// Default lowered to 1024 in 0.0.11 to match per-frame onset granularity.
         public let onsetWindowSize: Int
 
-        /// Onset detection hop size (samples). Used only if buffer is provided. Default: 1024.
+        /// STFT hop size (samples) for the spectral-flux onset detector. Default 512 (50% overlap).
         public let onsetHopSize: Int
 
-        /// Autocorrelation lag range minimum (ms) for tempo candidates. Default: 300 (~200 BPM).
+        /// Minimum inter-onset interval (ms) for the tempo histogram path. Default: 300 (~200 BPM).
         public let minTempoMs: Double
 
-        /// Autocorrelation lag range maximum (ms) for tempo candidates. Default: 3000 (~20 BPM).
+        /// Maximum inter-onset interval (ms) for the tempo histogram path. Default: 3000 (~20 BPM).
         public let maxTempoMs: Double
 
         /// Maximum number of tempo candidates to return. Default: 3.
         public let maxCandidates: Int
 
-        /// Harmonic ratios to consider (e.g., [2, 0.5] includes half-tempo and double-tempo of the dominant).
-        /// Default: [1, 2, 0.5, 1.5, 3, 0.33].
-        /// Ratios capture tempo ambiguity: double-tempo from syncopation, half-tempo from rubato, triplets.
+        /// Harmonic ratios used by the `estimateTempo(beats:)` JAMS-fed path (preserved for
+        /// backward compatibility). The buffer path generates 2x and 0.5x octave candidates
+        /// internally during histogram construction; this field is ignored on the buffer path.
         public let harmonicRatios: [Double]
 
         public init(
-            onsetWindowSize: Int = 2048,
-            onsetHopSize: Int = 1024,
+            onsetWindowSize: Int = 1024,
+            onsetHopSize: Int = 512,
             minTempoMs: Double = 300,
             maxTempoMs: Double = 3000,
             maxCandidates: Int = 3,
@@ -92,12 +93,18 @@ public enum TempoEstimator {
 
         var allCandidates: [TempoEstimate] = [baseTempoEstimate]
 
+        // Harmonics get a fixed octave-error penalty so they always rank below the base when
+        // beats are reasonably regular. Prior 0.0.10 logic used `regularity * (1.0 / ratio)`,
+        // which gave a 0.5x harmonic *twice* the confidence of the base and caused
+        // half-tempo to be reported as primary on regular beat streams (Phase 3.2 GuitarSet
+        // accuracy was 0% because of this — separate from the buffer-path 1/3-bug).
+        let harmonicPenalty = 0.5
         for ratio in configuration.harmonicRatios {
             guard ratio > 0 else { continue }
             if abs(ratio - 1.0) < 1e-6 { continue }
 
             let harmonicBpm = meanBpm * ratio
-            let harmonicConfidence = regularity * (1.0 / ratio)
+            let harmonicConfidence = regularity * harmonicPenalty
 
             allCandidates.append(TempoEstimate(bpm: harmonicBpm, confidence: harmonicConfidence, isHarmonic: true))
         }
@@ -110,15 +117,33 @@ public enum TempoEstimator {
         sampleRate: Double,
         configuration: Configuration
     ) -> [TempoEstimate] {
-        let beats = BeatTracker.detectBeats(
+        let onsets = SpectralFluxOnsetDetector.detectOnsets(
             buffer: buffer,
             sampleRate: sampleRate,
-            configuration: BeatTracker.Configuration(
-                onsetWindowSize: configuration.onsetWindowSize,
-                onsetHopSize: configuration.onsetHopSize
-            )
+            windowSize: configuration.onsetWindowSize,
+            hopSize: configuration.onsetHopSize
         )
 
-        return estimateTempoFromBeats(beats: beats, configuration: configuration)
+        let minBpm = max(40, Int((60_000.0 / configuration.maxTempoMs).rounded(.down)))
+        let maxBpm = min(200, Int((60_000.0 / configuration.minTempoMs).rounded(.up)))
+
+        let peaks = TempoHistogram.estimate(
+            onsets: onsets,
+            minBpm: minBpm,
+            maxBpm: maxBpm,
+            smoothingWindow: 3,
+            maxCandidates: configuration.maxCandidates
+        )
+
+        guard !peaks.isEmpty else { return [] }
+        let primaryBpm = peaks[0].bpm
+
+        return peaks.enumerated().map { idx, peak in
+            let isHarmonic = idx > 0 && (
+                abs(peak.bpm - primaryBpm * 2.0) < 1.5
+                || abs(peak.bpm - primaryBpm * 0.5) < 1.5
+            )
+            return TempoEstimate(bpm: peak.bpm, confidence: peak.confidence, isHarmonic: isHarmonic)
+        }
     }
 }

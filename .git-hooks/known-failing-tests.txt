@@ -22,11 +22,15 @@ MusicCraftCoreTests.RealAudioChordTests/testTaylorNylonChordAccuracy
 # Per Phase 3.2 calibration rule: 37.5% is 12.5pp below anchor, surface as finding, do not lower threshold.
 MusicCraftCoreTests.GuitarSetProgressionTests/testGuitarSetProgressionAccuracy
 
-# Phase 3.3 — GuitarSet tempo (1/3-tempo bug, independent algorithmic issue)
-# Root cause: RMS-based onset strength captures chord attack transients (~215 BPM),
-# not beat grid (129 BPM) on polyphonic guitar. Deferred to 0.0.10 spectral flux redesign.
-# Measured result: 0% within ±10%, consistent 1/3 ratio across all fixtures (129→43, 108→36, etc.)
-MusicCraftCoreTests.GuitarSetTempoTests/testGuitarSetTempoAccuracy
+# Phase 3.3 — GuitarSet tempo:
+#   - Buffer path: 1/3-tempo bug from RMS-based onset detection. Fixed in 0.0.11
+#     by replacing the onset detector with Dixon 2006 spectral flux
+#     (Sources/MusicCraftCore/DSP/SpectralFluxOnsetDetector.swift).
+#   - JAMS-fed path: half-tempo harmonic outranking the base candidate due to
+#     confidence=regularity*(1/ratio) weighting. Fixed in 0.0.11 by applying a
+#     fixed 0.5 octave-error penalty to harmonics (TempoEstimator.swift).
+# testGuitarSetTempoAccuracy is now passing at 100% within ±5% on the 5-fixture
+# subset (was 0% before 0.0.11). Removed from the allowlist with the 0.0.11 work.
 
 # Phase 3.2 — GuitarSet key inference (inherits chord accuracy)
 # Ground truth: 0% exact match, 20% relative match. Cascades from chord detection accuracy.

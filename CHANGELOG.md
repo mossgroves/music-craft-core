@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-05-12
+
+### Changed
+- **`TempoEstimator` buffer path rewritten with spectral-flux onset detection.** Replaces the RMS-energy-based onset signal that produced 0% accuracy with systematic 1/3-tempo error on real guitar audio (Phase 3.2 / 3.3 GuitarSet measurements). The new algorithm uses Dixon 2006 half-wave-rectified spectral flux with adaptive median thresholding, peak picking with a 50ms minimum gap, and a 1-BPM-resolution tempo histogram with internal 2x/0.5x octave-candidate handling.
+- **`TempoEstimator.estimateTempo(beats:)` harmonic-candidate ranking fixed.** Previously `harmonicConfidence = regularity * (1.0 / ratio)`, which made 0.5x candidates outrank the base. Replaced with a fixed `regularity * 0.5` octave-error penalty so the base IBI-derived BPM ranks first on regular beat streams. `testGuitarSetTempoAccuracy` moved from 0% within ±10% to 100% within ±5% on the 5-fixture GuitarSet subset; removed from the pre-push known-failing allowlist.
+- **`TempoEstimator.Configuration` defaults shifted.** `onsetWindowSize` 2048 → 1024, `onsetHopSize` 1024 → 512 to match the spectral-flux detector's per-frame granularity. Observable to callers passing stored Configuration values; callers using `Configuration()` see no change beyond the underlying algorithm shift. `harmonicRatios` is retained but no longer consulted on the buffer path (the new algorithm generates 2x/0.5x candidates internally).
+- **`BeatTracker.detectBeats(buffer:sampleRate:)` rewired** to call `SpectralFluxOnsetDetector` for the onset signal. Its `Configuration` defaults shift identically (1024/512); the autocorrelation step and minAutocorrPeak/inertia fields are no longer consulted (retained for backward compatibility).
+- **`TempoEstimate.confidence` doc-comment updated.** Buffer path: fraction of histogram evidence at this BPM. Beats path: inter-beat-interval regularity (1 − std/mean). Consumers should gate display on `confidence ≥ 0.3` to suppress unreliable estimates on low-rhythm material (e.g., monophonic vocals).
+
+### Added
+- Internal `SpectralFluxOnsetDetector` (`Sources/MusicCraftCore/DSP/SpectralFluxOnsetDetector.swift`): pure function returning onset times via STFT + spectral flux + adaptive thresholding.
+- Internal `TempoHistogram` (`Sources/MusicCraftCore/DSP/TempoHistogram.swift`): pure function returning ranked BPM peaks from a list of onset times. Primary IOI-derived candidate weighted 1.0; 2x/0.5x octave variants weighted 0.5 to break ties in favor of the unambiguous reading.
+- `SpectralFluxTempoTests`: 8 new tests covering the regression fixture (120 BPM click track, formerly returning ~40 BPM in the 1/3-bug), histogram correctness on synthetic regular onsets, low-rhythm-content confidence behavior, and detector edge cases (empty, silence).
+- `GuitarSetTempoBufferTests.testBufferDerivedTempoConfidenceContract`: real-audio assertion that the algorithm never produces a high-confidence wrong tempo on percussive guitar. On the 5-fixture GuitarSet subset, 1/5 fixtures returns an accurate estimate; the remaining 4/5 return low-confidence estimates (0.05–0.09) that the consumer display gate (0.3) correctly suppresses. This is the load-bearing contract for the Sanctuary consumer use case — pre-0.0.11 the algorithm produced high-confidence wrong tempo with no display-gate signal.
+
+### Public API
+- No breaking changes. `TempoEstimator.estimateTempo(beats:buffer:sampleRate:configuration:)`, the `Configuration` struct shape, `TempoEstimate` shape, and `BeatTracker.detectBeats(buffer:sampleRate:configuration:)` are signature-identical. Behavior shifts and Configuration default shifts are documented above.
+
+### Honest measurement notes
+- Buffer-derived accuracy on real guitar audio: 1/5 (20%) within ±10% on the 5-fixture GuitarSet subset, below the 40% target stated in `specs/0.0.11-tempo-spectral-flux.md`. The 4 inaccurate cases return confidence 0.05–0.09 — below the 0.3 display gate — so the consumer correctly suppresses display. This is the spec's "experimentation mode; honest measurement matters more than hitting an aspirational number" outcome.
+- JAMS-fed accuracy: 100% within ±5% on the same 5-fixture subset after the harmonic-confidence fix.
+
+See `specs/0.0.11-tempo-spectral-flux.md` for full algorithm and rationale.
+
 ## [0.0.10.1] - 2026-05-12
 
 ### Fixed

@@ -113,10 +113,13 @@ final class TempoEstimatorTests: XCTestCase {
 
     func testConfigurationDefaults() {
         // Structural: Configuration defaults are correctly set.
+        // 0.0.11: window/hop defaults lowered to 1024/512 to match the spectral-flux onset
+        // detector's per-frame granularity (previously 2048/1024 driving an RMS-autocorrelation
+        // pipeline).
         let config = TempoEstimator.Configuration()
 
-        XCTAssertEqual(config.onsetWindowSize, 2048)
-        XCTAssertEqual(config.onsetHopSize, 1024)
+        XCTAssertEqual(config.onsetWindowSize, 1024)
+        XCTAssertEqual(config.onsetHopSize, 512)
         XCTAssertEqual(config.minTempoMs, 300)
         XCTAssertEqual(config.maxTempoMs, 3000)
         XCTAssertEqual(config.maxCandidates, 3)
