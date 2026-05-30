@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-05-30
+
+### Changed
+- **`MelodyKeyInference` rewritten with tonal-profile (Krumhansl–Kessler) correlation.** The prior algorithm scored a key by the fraction of sung pitch classes diatonic to its scale — but a major key and its relative minor share a scale, so they always tied, and the tie-break hard-preferred minor. Every inference was a major-vs-relative-minor coin toss biased to minor. The new algorithm builds a **duration-weighted** (confidence-modulated) 12-bin pitch-class profile from the notes and scores all 24 keys by **Pearson correlation** against the Krumhansl–Kessler tonal hierarchy rotated to each tonic (Krumhansl 1990, Table 2.1). Because a major key and its relative minor have *different* profiles, they now score differently — the minor bias is gone, and duration emphasis on the tonic triad decides the relative pair.
+  - The hard "prefer minor" tie-break is **removed**. Ranking uses a total-order comparator (correlation, then tonic note-count, then a stable non-mode order), which also makes the result **fully deterministic run-to-run** (the old score-tie sort was order-unstable).
+  - Krumhansl–Kessler profiles live as named constants (`kkMajor` / `kkMinor`); Temperley/Aarden variants are drop-in swappable.
+  - Guards unchanged: ≥3 notes and ≥2 distinct pitch classes, else `[]`.
+
+### Public API
+- No signature change. `MelodyKeyInference.infer(from:maxCandidates:)` and the `KeyCandidate` shape (`key`, `score`, `tonicFrequency`) are identical.
+- **`KeyCandidate.score` semantics changed** (behavior, not shape): it is now the winning KK-profile correlation clamped to `[0, 1]`, not the old diatonic fraction. **Consumer impact:** Sanctuary's `HarmonyKeyGate` threshold (0.6) was calibrated to the old scale and will need recalibration against the new score distribution — see the cantus-eval re-run. No gate changed in this release.
+
+### Tests
+- Updated `MelodyKeyInferenceTests` whose expected scores/outputs changed (C-major scale score is now a correlation, not 1.0; A-minor scale now emphasizes the tonic triad by duration to resolve to minor; the former "tied frequency prefers minor" test now asserts major-triad content resolves to **major**).
+- Added relative-pair capability tests: same scale content resolves to major or minor purely by which tonic triad is held longer.
+- Full suite: 356 → 358 tests (+2). Failing set unchanged (the 4 pre-existing chord/GuitarSet-accuracy allowlist entries).
+
+### Tier / classification
+- Tier 2, yellow: single-subsystem algorithm rework, no public API signature change. Held for tag/version approval per the red posture on tag operations; consumer (Sanctuary) recalibration pending.
+
 ## [0.0.11] - 2026-05-12
 
 ### Changed

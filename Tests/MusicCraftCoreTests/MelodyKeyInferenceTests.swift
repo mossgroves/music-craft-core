@@ -47,21 +47,27 @@ final class MelodyKeyInferenceTests: XCTestCase {
         XCTAssertGreaterThan(result.count, 0)
         XCTAssertEqual(result[0].key.root, .C)
         XCTAssertEqual(result[0].key.mode, .major)
-        XCTAssertEqual(result[0].score, 1.0)
+        // 0.0.12: score is now a tonal-profile correlation (0–1), not the old diatonic fraction.
+        XCTAssertGreaterThan(result[0].score, 0.0)
+        XCTAssertLessThanOrEqual(result[0].score, 1.0)
     }
 
-    // MARK: - A minor scale
+    // MARK: - A minor scale (tonic emphasized by duration)
 
     func testAMinorScaleProducesAMinorTopCandidate() {
-        // A natural minor scale: A, B, C, D, E, F, G (all diatonic to A minor)
+        // A minor, with the tonic triad (A, C, E) emphasized by duration so the tonal profile
+        // resolves to minor rather than its relative major. (An equal-duration scale with the
+        // tonic sounded only once is genuinely ambiguous between A minor and C major — that's
+        // what duration weighting is for.)
         let notes = [
-            DetectedNote(midiNote: 69, onsetTime: 0.0, duration: 0.1, confidence: 0.9),  // A4, pitch class 9
-            DetectedNote(midiNote: 71, onsetTime: 0.1, duration: 0.1, confidence: 0.9),  // B4, pitch class 11
-            DetectedNote(midiNote: 60, onsetTime: 0.2, duration: 0.1, confidence: 0.9),  // C5, pitch class 0
-            DetectedNote(midiNote: 62, onsetTime: 0.3, duration: 0.1, confidence: 0.9),  // D5, pitch class 2
-            DetectedNote(midiNote: 64, onsetTime: 0.4, duration: 0.1, confidence: 0.9),  // E5, pitch class 4
-            DetectedNote(midiNote: 65, onsetTime: 0.5, duration: 0.1, confidence: 0.9),  // F5, pitch class 5
-            DetectedNote(midiNote: 67, onsetTime: 0.6, duration: 0.1, confidence: 0.9),  // G5, pitch class 7
+            DetectedNote(midiNote: 69, onsetTime: 0.0, duration: 1.0, confidence: 0.9),  // A — long tonic
+            DetectedNote(midiNote: 71, onsetTime: 1.0, duration: 0.1, confidence: 0.9),  // B passing
+            DetectedNote(midiNote: 60, onsetTime: 1.1, duration: 0.5, confidence: 0.9),  // C — held (minor 3rd)
+            DetectedNote(midiNote: 62, onsetTime: 1.6, duration: 0.1, confidence: 0.9),  // D passing
+            DetectedNote(midiNote: 64, onsetTime: 1.7, duration: 0.5, confidence: 0.9),  // E — held (5th)
+            DetectedNote(midiNote: 65, onsetTime: 2.2, duration: 0.1, confidence: 0.9),  // F passing
+            DetectedNote(midiNote: 67, onsetTime: 2.3, duration: 0.1, confidence: 0.9),  // G passing
+            DetectedNote(midiNote: 69, onsetTime: 2.4, duration: 1.0, confidence: 0.9),  // A — long tonic (return)
         ]
 
         let result = MelodyKeyInference.infer(from: notes)
@@ -69,7 +75,8 @@ final class MelodyKeyInferenceTests: XCTestCase {
         XCTAssertGreaterThan(result.count, 0)
         XCTAssertEqual(result[0].key.root, .A)
         XCTAssertEqual(result[0].key.mode, .minor)
-        XCTAssertEqual(result[0].score, 1.0)
+        XCTAssertGreaterThan(result[0].score, 0.0)
+        XCTAssertLessThanOrEqual(result[0].score, 1.0)
     }
 
     // MARK: - Disambiguation by tonic frequency
@@ -116,19 +123,63 @@ final class MelodyKeyInferenceTests: XCTestCase {
         XCTAssertEqual(result[0].key.mode, .minor)
     }
 
-    func testCMajorVsAMinorTiedFrequencyPrefersMinor() {
-        // Pitch classes: C (1×), A (1×), E (1×), G (1×)
-        // Tied frequency count; should prefer minor (per algorithm)
+    func testMajorTriadContentResolvesToMajorNotRelativeMinor() {
+        // Regression for the removed minor bias. C–E–G (the C major triad) is diatonic to both
+        // C major and A/E minor; the pre-0.0.12 algorithm tied them and broke the tie by
+        // hard-preferring minor. Tonal-profile correlation now picks C MAJOR — the chord's
+        // actual tonal center — instead of defaulting to a relative/parallel minor.
         let notes = [
-            DetectedNote(midiNote: 60, onsetTime: 0.0, duration: 0.1, confidence: 0.9),  // C, pitch class 0
-            DetectedNote(midiNote: 69, onsetTime: 0.1, duration: 0.1, confidence: 0.9),  // A, pitch class 9
-            DetectedNote(midiNote: 64, onsetTime: 0.2, duration: 0.1, confidence: 0.9),  // E, pitch class 4
-            DetectedNote(midiNote: 67, onsetTime: 0.3, duration: 0.1, confidence: 0.9),  // G, pitch class 7
+            DetectedNote(midiNote: 60, onsetTime: 0.0, duration: 0.4, confidence: 0.9),  // C
+            DetectedNote(midiNote: 64, onsetTime: 0.4, duration: 0.4, confidence: 0.9),  // E
+            DetectedNote(midiNote: 67, onsetTime: 0.8, duration: 0.4, confidence: 0.9),  // G
+            DetectedNote(midiNote: 72, onsetTime: 1.2, duration: 0.4, confidence: 0.9),  // C (octave)
         ]
 
         let result = MelodyKeyInference.infer(from: notes)
 
         XCTAssertGreaterThan(result.count, 0)
+        XCTAssertEqual(result[0].key.root, .C)
+        XCTAssertEqual(result[0].key.mode, .major, "major-triad content must not default to minor")
+    }
+
+    // MARK: - Duration emphasis decides the relative pair (0.0.12 capability)
+
+    func testDurationEmphasisOnTonicTriadResolvesMajor() {
+        // Same C-major scale pitch-class content; the C-major triad (C, E, G) is held long.
+        // The tonal profile must resolve to C major.
+        let long = 0.8, short = 0.12
+        let notes = [
+            DetectedNote(midiNote: 60, onsetTime: 0.0, duration: long, confidence: 0.9),  // C *
+            DetectedNote(midiNote: 62, onsetTime: 0.9, duration: short, confidence: 0.9), // D
+            DetectedNote(midiNote: 64, onsetTime: 1.1, duration: long, confidence: 0.9),  // E *
+            DetectedNote(midiNote: 65, onsetTime: 2.0, duration: short, confidence: 0.9), // F
+            DetectedNote(midiNote: 67, onsetTime: 2.2, duration: long, confidence: 0.9),  // G *
+            DetectedNote(midiNote: 69, onsetTime: 3.1, duration: short, confidence: 0.9), // A
+            DetectedNote(midiNote: 71, onsetTime: 3.3, duration: short, confidence: 0.9), // B
+        ]
+        let result = MelodyKeyInference.infer(from: notes)
+        XCTAssertGreaterThan(result.count, 0)
+        XCTAssertEqual(result[0].key.root, .C)
+        XCTAssertEqual(result[0].key.mode, .major)
+    }
+
+    func testDurationEmphasisOnTonicTriadResolvesMinor() {
+        // SAME pitch-class content as above, but the A-minor triad (A, C, E) is held long.
+        // Duration emphasis flips the call to A minor — proving the relative pair is decided
+        // by tonal weight, not a fixed mode preference.
+        let long = 0.8, short = 0.12
+        let notes = [
+            DetectedNote(midiNote: 69, onsetTime: 0.0, duration: long, confidence: 0.9),  // A *
+            DetectedNote(midiNote: 71, onsetTime: 0.9, duration: short, confidence: 0.9), // B
+            DetectedNote(midiNote: 60, onsetTime: 1.1, duration: long, confidence: 0.9),  // C *
+            DetectedNote(midiNote: 62, onsetTime: 2.0, duration: short, confidence: 0.9), // D
+            DetectedNote(midiNote: 64, onsetTime: 2.2, duration: long, confidence: 0.9),  // E *
+            DetectedNote(midiNote: 65, onsetTime: 3.1, duration: short, confidence: 0.9), // F
+            DetectedNote(midiNote: 67, onsetTime: 3.3, duration: short, confidence: 0.9), // G
+        ]
+        let result = MelodyKeyInference.infer(from: notes)
+        XCTAssertGreaterThan(result.count, 0)
+        XCTAssertEqual(result[0].key.root, .A)
         XCTAssertEqual(result[0].key.mode, .minor)
     }
 
@@ -159,27 +210,25 @@ final class MelodyKeyInferenceTests: XCTestCase {
         XCTAssertLessThanOrEqual(result.count, 2)
     }
 
-    // MARK: - Partial fit
+    // MARK: - Score semantics (0.0.12: 0–1 tonal-profile correlation)
 
-    func testPartialFitProducesIntermediateScore() {
-        // Pitch classes: C (0), E (4), G (7), B (11)
-        // C major: 0,2,4,5,7,9,11 — matches C, E, G, B = 4/4 diatonic = score 1.0
-        // G major: 7,9,11,0,2,4,6 — matches C, E, G, B = 4/4 diatonic = score 1.0
-        // C minor: 0,2,3,5,7,8,10 — matches C, E, G = 3/4 diatonic = score 0.75
-        // (All major/minor at root 2 would match C, E, G, B but maybe not all...)
-        // So multiple keys tie at 1.0, and C major should win on frequency
+    func testScoreIsZeroToOneConfidence() {
+        // 0.0.12: KeyCandidate.score is the winning KK-profile correlation, clamped to [0, 1].
+        // (Was the diatonic fraction pre-0.0.12; consumers gating on the old scale must recalibrate.)
         let notes = [
-            DetectedNote(midiNote: 60, onsetTime: 0.0, duration: 0.1, confidence: 0.9),  // C
-            DetectedNote(midiNote: 64, onsetTime: 0.1, duration: 0.1, confidence: 0.9),  // E
-            DetectedNote(midiNote: 67, onsetTime: 0.2, duration: 0.1, confidence: 0.9),  // G
-            DetectedNote(midiNote: 71, onsetTime: 0.3, duration: 0.1, confidence: 0.9),  // B
+            DetectedNote(midiNote: 60, onsetTime: 0.0, duration: 0.4, confidence: 0.9),  // C
+            DetectedNote(midiNote: 64, onsetTime: 0.4, duration: 0.4, confidence: 0.9),  // E
+            DetectedNote(midiNote: 67, onsetTime: 0.8, duration: 0.4, confidence: 0.9),  // G
+            DetectedNote(midiNote: 71, onsetTime: 1.2, duration: 0.2, confidence: 0.9),  // B
         ]
 
         let result = MelodyKeyInference.infer(from: notes)
 
         XCTAssertGreaterThan(result.count, 0)
-        // Score should be at least 0.75 (partial fit)
-        XCTAssertGreaterThanOrEqual(result[0].score, 0.75)
+        XCTAssertGreaterThan(result[0].score, 0.0)
+        XCTAssertLessThanOrEqual(result[0].score, 1.0)
+        // ranked: top candidate's score is the best correlation
+        if result.count >= 2 { XCTAssertGreaterThanOrEqual(result[0].score, result[1].score) }
     }
 
     // MARK: - Public API and Sendable
