@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.13] - 2026-05-30
+
+### Changed
+- **SwiftPM-resolvable re-release of the G♯-minor enharmonic spelling fix.** The fix shipped in 0.0.12.1, but `0.0.12.1` is a 4-component tag and not valid SemVer; SwiftPM's `from:` solver cannot resolve it. Verified by probe: a `from: "0.0.12"` consumer locks 0.0.12 and ignores the 0.0.12.1 tag even after `swift package update`, and `from: "0.0.12.1"` fails manifest evaluation ("Invalid semantic version string"). 0.0.13 carries the identical fix on a 3-component tag so `from: "0.0.12"` consumers resolve it on a normal `swift package update`. No code change from 0.0.12.1 — `keyUsesFlats` already drops `.Gs`; G♯ minor spells G♯m, A♯°, B, C♯m, D♯m, E, F♯.
+
+### Versioning
+- `musicCraftCoreVersion` → "0.0.13". The non-resolvable `0.0.12.1` tag is left in place (inert for SwiftPM) but superseded; consumers adopt 0.0.13.
+
+### Tier / classification
+- Tier 2 — release/tag op behind the red tag gate (Chris-authorized). No logic change.
+
 ## [0.0.12.1] - 2026-05-30
 
 ### Fixed

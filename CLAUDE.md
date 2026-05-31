@@ -54,6 +54,7 @@ Similar to Cantus/CLAUDE.md:
 - Any change to PitchDetector, CanonicalChromaLibrary, ChromaExtractor, DSPUtilities public APIs
 - File deletions or renames
 - Package.swift version or tag operations
+- **Release tags MUST be 3-component SemVer (`MAJOR.MINOR.PATCH`, e.g. `0.0.13`).** Never use 4-component tags (`0.0.6.1`, `0.0.10.1`, `0.0.12.1`) — SwiftPM's `from:`/range resolution silently ignores them (a 4th component is not valid SemVer), so version-pinned consumers cannot adopt the release. Verified 2026-05-30 (resolve probe). A patch takes the next patch number, not a 4th component.
 - Any open questions that Chris has not resolved
 - **Integration of third-party code or algorithms without security review.** Before porting, adapting, or integrating any external code (academic libraries, reference implementations, algorithm papers), produce a security analysis document covering: (1) code injection vectors (eval, exec, compile, __import__, pickle, subprocess, os.system, open); (2) ReDoS vulnerabilities in regex patterns; (3) buffer/array handling and bounds safety; (4) dependency analysis and transitive risks; (5) cryptographic or sensitive data handling; (6) exception handling design; (7) known CVEs or security advisories. Classify as SAFE TO PORT with specific Swift adaptation recommendations, or UNSAFE with reasons. File the analysis in /tmp/ or docs/security/ and link from the implementing commit. Examples: mir_eval chord validation, external pitch detection references, DSP algorithm implementations.
 
