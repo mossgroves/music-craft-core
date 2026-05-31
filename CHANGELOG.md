@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.12.1] - 2026-05-30
+
+### Fixed
+- **`DiatonicChordGenerator` spelled G♯ minor's diatonic chords in flats**, contradicting the sharp key label. `keyUsesFlats(root:mode:)` classified G♯ minor (a 5-sharp key) as a flat key, so `generate(for:)` emitted A♭m / B♭° / … and `spelledRoot` / `keyDisplayName` returned A♭ for a key the rest of the library displays as G♯ minor (A♭ minor is the unused 7-flat enharmonic). Fix: removed `.Gs` from the minor branch of `keyUsesFlats`. The seven diatonic chords now follow the conventional G♯-minor spelling: G♯m, A♯°, B, C♯m, D♯m, E, F♯. Pre-existing bug; predates and is independent of the 0.0.12 MelodyKeyInference rewrite.
+
+### Public API
+- No signature change. `generate(for:)`, `spelledRoot(for:)`, `keyDisplayName(for:)` are shape-identical; their **output strings change for G♯ minor inputs only** (flat → sharp). Any consumer snapshot/test asserting the old A♭-minor spelling must update. Flagged to Sanctuary via cross-project-log.
+
+### Tests
+- Added regression coverage asserting G♯ minor's diatonic chord names and root spelling are sharp.
+- Version assertion updated to 0.0.12.1.
+
+### Tier / classification
+- Tier 2 — yellow code change (behavior fix to an internal speller; no public signature change) behind the red tag gate (Chris-authorized).
+
 ## [0.0.12] - 2026-05-30
 
 ### Changed

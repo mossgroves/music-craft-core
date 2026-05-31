@@ -202,7 +202,7 @@ public enum DiatonicChordGenerator {
             }
         case .minor:
             switch root {
-            case .D, .G, .C, .F, .As, .Ds, .Gs: return true
+            case .D, .G, .C, .F, .As, .Ds: return true
             default: return false
             }
         }

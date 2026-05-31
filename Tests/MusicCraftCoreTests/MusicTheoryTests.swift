@@ -156,6 +156,38 @@ final class MusicTheoryTests: XCTestCase {
         XCTAssertEqual(chords[0].root.displayString, "E")
     }
 
+    // Regression: 0.0.12.1. Pre-fix, keyUsesFlats(.Gs, .minor) returned true, so
+    // generate emitted A♭m/B♭°/… while the key label stayed sharp ("G♯ minor"),
+    // a self-contradiction. The fix removed .Gs from the minor flat set; the
+    // diatonic chords now follow the conventional 5-sharp G♯-minor spelling.
+    func testDiatonicChordsInGSharpMinorSpellSharp() {
+        let key = MusicalKey(root: .Gs, mode: .minor)
+        let chords = DiatonicChordGenerator.generate(for: key)
+        let names = chords.map(\.chordName)
+        XCTAssertEqual(
+            names,
+            ["G♯m", "A♯°", "B", "C♯m", "D♯m", "E", "F♯"],
+            "G♯ minor's diatonic chords must spell sharp (5-sharp key signature), not flat."
+        )
+        XCTAssertEqual(
+            DiatonicChordGenerator.spelledRoot(for: key).displayString,
+            "G♯",
+            "Root of G♯ minor must spell G♯, not A♭."
+        )
+    }
+
+    // Regression guard: .As minor (B♭ minor, 5 flats) must STILL spell with flats.
+    // Confirms the fix only touched .Gs minor and didn't disturb the relative-pair speller.
+    func testDiatonicChordsInBFlatMinorStillSpellFlat() {
+        let key = MusicalKey(root: .As, mode: .minor)
+        let chords = DiatonicChordGenerator.generate(for: key)
+        XCTAssertEqual(
+            chords.first?.chordName,
+            "B♭m",
+            "B♭ minor (.As minor) must continue to spell flat after the G♯-minor fix."
+        )
+    }
+
     // MARK: - Transposer
 
     func testTransposerCUpPerfectFifth() {
