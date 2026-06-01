@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-01
+
+### Release — silence guard + note-native chord-segment cleanup (device-validated)
+- Both changes below were device-validated on iPhone 15 Pro Max + Taylor 812ce-n (chords/key correct; the phantom-chords-on-silence read gone; leading transients and held-chord flicker reduced). They touch only the internal `AudioExtractor.extract` behavior — `Result`, `Configuration`, and all public types are unchanged. `musicCraftCoreVersion` → "0.1.1".
+
 ### Changed — note-native chord segments: trim pick-attack/release transients + absorb same-root sus flicker
 - **`noteNativeChordSegments` cleans up the run list before emitting segments.** Two conservative passes: (1) **edge trim** — drop a leading/trailing run that is short (≤ one window-hop, 0.75 s) AND low-confidence (< 0.7), removing the pick-attack/release window that named a spurious chord before the notes settled (e.g. testspanish's leading `E`, testandy's trailing `G♯`); bench fixtures are a single sustained chord (one long run), so they are never edge-trimmed. (2) **flicker absorb** — a single interior run that shares its root with an *identical* chord on both sides becomes that chord (`Am–Asus2–Am → Am`); different flanks or a different root are left alone, so genuine chord changes survive. On the device-test recordings: testspanish 10→7 segments, test 14→12, testandy 21→14 — leading transients gone, held-chord sus flicker collapsed, the multi-chord progressions and inferred keys preserved. The 3-way bench's integrated-`extract` **exact** accuracy rose to match the direct namer (GADA 93.8→100, TaylorNylon 92.7→99.1; root unchanged 100/99.1), because `chordSegments.first` is now the settled chord rather than the attack artifact. No public API change.
 
