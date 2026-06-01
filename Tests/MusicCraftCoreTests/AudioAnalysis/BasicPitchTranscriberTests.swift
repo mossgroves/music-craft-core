@@ -1,14 +1,14 @@
 import XCTest
 @testable import MusicCraftCore
 
-/// Phase 1 tests for `BasicPitchTranscriber` (MCC 0.0.14, `specs/0.0.14-basic-pitch-adoption.md`).
+/// Tests for `BasicPitchTranscriber` (Basic Pitch adoption; spec `specs/0.0.14-basic-pitch-adoption.md`).
 ///
 /// Two tiers:
 ///  - **Pure** (always run on the CLI): the vDSP resampler and the ported note decoder.
 ///    These validate the adapted algorithm without Core ML.
 ///  - **Model-dependent** (load + run the bundled Core ML model): these `XCTSkip` if Core ML
 ///    model loading isn't available under the test runner, rather than fail — the authoritative
-///    model validation is the device/Xcode step gating the 0.0.14 tag.
+///    model validation is the device/Xcode step.
 final class BasicPitchTranscriberTests: XCTestCase {
 
     // MARK: - Pure: resampler (bounds + behavior)
@@ -92,7 +92,7 @@ final class BasicPitchTranscriberTests: XCTestCase {
         } catch {
             throw XCTSkip("Bundled Core ML model could not be loaded under this test runner "
                 + "(\(error)). Model-dependent tests run via Xcode / on device — the authoritative "
-                + "validation gating the 0.0.14 tag.")
+                + "validation.")
         }
     }
 

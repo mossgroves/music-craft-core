@@ -2,29 +2,37 @@ import XCTest
 import AVFoundation
 @testable import MusicCraftCore
 
-/// Real-audio chord detection tests using GADA and TaylorNylon fixtures (Phase 2.5).
-/// Tests against Stage 2 baseline accuracy thresholds derived from legacy Cantus AudioExtractor.
+/// Real-audio chord detection tests using GADA and TaylorNylon fixtures.
+/// Scores `AudioExtractor.extract` (the Basic Pitch + note-native chord path — the only path as of 0.1.0)
+/// against the Stage 2 baseline accuracy thresholds derived from legacy Cantus AudioExtractor.
 final class RealAudioChordTests: XCTestCase {
 
     // MARK: - Baseline Thresholds
 
     struct Thresholds {
-        // PHASE 2.7 — Thresholds temporarily reverted to high baseline (95%/80%) to surface a real product issue.
-        // Phase 2.6 diagnostic confirmed AudioExtractor.extract produces 40.6% GADA root / 31.2% TaylorNylon root.
-        // Accepting this as "baseline" masks a critical gap: Sanctuary's slice 9 "chord heard" block will be wrong
-        // most of the time when users capture real audio. These high thresholds correctly fail and demand a fix path.
-        // See docs/diagnostics/phase-2-6-baseline-investigation.md for diagnostic findings and clarifications being
-        // investigated in Phase 2.7 (Stage 2 call path, segment presence dump, fix path selection).
-        // Stage 2 legacy baseline (99.7% GADA root, 88.1% TaylorNylon root) remains the target accuracy.
+        // As of 0.1.0 these score the Basic Pitch + note-native chord path. That path replaced the
+        // chroma+template `ChordDetector` that produced the Phase 2.6/2.7 product gap (40.6% GADA root /
+        // 31.2% TaylorNylon root, which these thresholds were set high to surface). The note-native namer
+        // measures ≈99–100% root/exact on these single-chord fixtures (see BasicPitchChordBench), so these
+        // thresholds now validate the consolidation rather than demand a fix. Stage 2 legacy baseline
+        // (99.7% GADA root, 88.1% TaylorNylon root) remains the long-term target.
         static let gadaRootAccuracy: Double = 0.95
         static let gadaExactAccuracy: Double = 0.90
         static let taylorNylonRootAccuracy: Double = 0.80
         static let taylorNylonExactAccuracy: Double = 0.65
     }
 
+    /// The chord path runs the bundled Basic Pitch Core ML model; skip cleanly where it can't load
+    /// under this runner (the device/Xcode run is authoritative — same posture as the transcriber tests).
+    private func skipUnlessBasicPitchModelLoads() throws {
+        do { _ = try BasicPitchTranscriber() }
+        catch { throw XCTSkip("Bundled Core ML model could not load under this runner (\(error)).") }
+    }
+
     // MARK: - GADA Tests
 
     func testGADAChordAccuracy() throws {
+        try skipUnlessBasicPitchModelLoads()
         guard let gadaDir = getFixturesDirectory(named: "real-audio/gada") else {
             throw XCTSkip("GADA fixtures not available")
         }
@@ -53,6 +61,7 @@ final class RealAudioChordTests: XCTestCase {
     // MARK: - TaylorNylon Tests
 
     func testTaylorNylonChordAccuracy() throws {
+        try skipUnlessBasicPitchModelLoads()
         guard let taylorDir = getFixturesDirectory(named: "real-audio/taylor-nylon") else {
             throw XCTSkip("TaylorNylon fixtures not available")
         }
@@ -123,7 +132,10 @@ final class RealAudioChordTests: XCTestCase {
 
         for wavFile in wavFiles {
             let chordLabel = parseGADAFilename(wavFile.lastPathComponent)
-            guard let groundTruthChord = chordLabel else { continue }
+            // Parse the label through Chord(parsing:) so the comparison is canonical (pitch-class root +
+            // quality enum). Comparing a root-only displayName ("A") to a quality-bearing label ("Am")
+            // would falsely miss every non-major chord.
+            guard let groundTruthChord = chordLabel, let truthChord = Chord(parsing: groundTruthChord) else { continue }
 
             // Load audio
             guard let audioFile = try? AVAudioFile(forReading: wavFile),
@@ -142,18 +154,12 @@ final class RealAudioChordTests: XCTestCase {
             let result = AudioExtractor.extract(buffer: samples, sampleRate: audioFile.processingFormat.sampleRate)
 
             if let segment = result.chordSegments.first {
-                let detectedRoot = segment.chord.root.displayName
-                let detectedExact = segment.chord.displayName
-
-                // Compare root
-                if detectedRoot == groundTruthChord {
-                    rootCorrect += 1
-                    exactCorrect += 1  // Exact includes root
-                } else if detectedExact == groundTruthChord {
+                let detected = segment.chord
+                if detected.root == truthChord.root { rootCorrect += 1 }
+                if detected.root == truthChord.root && detected.quality == truthChord.quality {
                     exactCorrect += 1
                 } else {
-                    // Track confusion
-                    let confusion = "\(groundTruthChord)→\(detectedRoot)"
+                    let confusion = "\(groundTruthChord)→\(detected.displayName)"
                     confusionCounts[confusion, default: 0] += 1
                 }
             }
@@ -185,6 +191,9 @@ final class RealAudioChordTests: XCTestCase {
 
         for folder in chordFolders {
             let groundTruthChord = folder.lastPathComponent
+            // Canonical comparison (see testChordFiles): root-only displayName vs quality-bearing label
+            // would falsely miss every non-major chord.
+            guard let truthChord = Chord(parsing: groundTruthChord) else { continue }
             guard let wavFiles = try? fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else {
                 continue
             }
@@ -207,18 +216,12 @@ final class RealAudioChordTests: XCTestCase {
                 let result = AudioExtractor.extract(buffer: samples, sampleRate: audioFile.processingFormat.sampleRate)
 
                 if let segment = result.chordSegments.first {
-                    let detectedRoot = segment.chord.root.displayName
-                    let detectedExact = segment.chord.displayName
-
-                    // Compare root
-                    if detectedRoot == groundTruthChord {
-                        totalRootCorrect += 1
-                        totalExactCorrect += 1  // Exact includes root
-                    } else if detectedExact == groundTruthChord {
+                    let detected = segment.chord
+                    if detected.root == truthChord.root { totalRootCorrect += 1 }
+                    if detected.root == truthChord.root && detected.quality == truthChord.quality {
                         totalExactCorrect += 1
                     } else {
-                        // Track confusion
-                        let confusion = "\(groundTruthChord)→\(detectedRoot)"
+                        let confusion = "\(groundTruthChord)→\(detected.displayName)"
                         allConfusions[confusion, default: 0] += 1
                     }
                 }

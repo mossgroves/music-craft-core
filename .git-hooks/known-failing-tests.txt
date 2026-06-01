@@ -9,17 +9,17 @@
 # When you intentionally add a new failing test (Phase 2.7 / 3.2 style),
 # ADD its entry here in the same commit with a comment citing the phase / reason.
 
-# Phase 2.7 — ChordDetector single-chord accuracy
-# Ground truth: GADA 40.6% root, TaylorNylon 31.2% root
-# Thresholds set to 95% and 80% to surface the product issue and demand a fix path.
-# Stage 2 legacy baseline remains the target (99.7% GADA root, 88.1% TaylorNylon root).
-MusicCraftCoreTests.RealAudioChordTests/testGADAChordAccuracy
-MusicCraftCoreTests.RealAudioChordTests/testTaylorNylonChordAccuracy
+# 0.1.0 — RealAudioChordTests fixed by the Basic Pitch + note-native consolidation.
+# The chroma+template ChordDetector single-chord accuracy (GADA 40.6% / TaylorNylon 31.2% root) was
+# the reason these were allowlisted. The Basic Pitch note-native path scores GADA 100% root / 93.8%
+# exact and TaylorNylon 99.1% root / 92.7% exact (canonical pitch-class metric), comfortably above the
+# 95%/80% root + 90%/65% exact thresholds, so both tests now pass and were removed from this list.
 
 # Phase 3.2 — GuitarSet measurements (chord progression CSR below threshold)
-# Ground truth: Mean CSR 37.5% across 5 fixtures (0.8% to 59.4% range)
-# Threshold set to 50% to surface chord accuracy limitation (same root cause as Phase 2.7).
-# Per Phase 3.2 calibration rule: 37.5% is 12.5pp below anchor, surface as finding, do not lower threshold.
+# Ground truth (0.1.0, Basic Pitch + note-native path): Mean CSR 28.7% across the GuitarSet subset
+# (was 37.5% on the removed chroma+template path). GuitarSet is full polyphonic comping with chord
+# changes over time; the windowed note-native segmentation tracks it worse than single sustained chords.
+# Threshold held at 50% to keep surfacing the progression-segmentation limitation (do not lower).
 MusicCraftCoreTests.GuitarSetProgressionTests/testGuitarSetProgressionAccuracy
 
 # Phase 3.3 — GuitarSet tempo:
@@ -33,7 +33,8 @@ MusicCraftCoreTests.GuitarSetProgressionTests/testGuitarSetProgressionAccuracy
 # subset (was 0% before 0.0.11). Removed from the allowlist with the 0.0.11 work.
 
 # Phase 3.2 — GuitarSet key inference (inherits chord accuracy)
-# Ground truth: 0% exact match, 20% relative match. Cascades from chord detection accuracy.
+# Ground truth (0.1.0, Basic Pitch + note-native path): 0% exact match, 20% relative match —
+# unchanged from the removed chroma+template path; cascades from the GuitarSet progression accuracy above.
 # Per Phase 3.2: measurements from chord-rich comping only (chord-based key inference path).
 # MelodyKeyInference pitch-class fallback NOT exercised by these fixtures; do not claim general key accuracy.
 MusicCraftCoreTests.GuitarSetKeyInferenceTests/testGuitarSetKeyInferenceAccuracy

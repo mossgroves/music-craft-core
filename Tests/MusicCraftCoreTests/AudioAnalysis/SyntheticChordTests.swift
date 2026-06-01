@@ -11,9 +11,9 @@ final class SyntheticChordTests: XCTestCase {
 
         let result = AudioExtractor.extract(buffer: fixture.samples, sampleRate: fixture.sampleRate)
 
-        // Structural validation: synthetic sine wave fixtures do not reliably trigger
-        // OnsetDetector's RMS-energy threshold per AudioExtractorTests.swift documentation.
-        // Correctness validation happens with real-audio fixtures in Phase 2+.
+        // Structural validation: synthetic sine wave fixtures do not reliably transcribe to notes
+        // through the Basic Pitch model per AudioExtractorTests.swift documentation.
+        // Correctness validation happens with real-audio fixtures (RealAudioChordTests).
         // Just verify the extraction completes without error.
         XCTAssertEqual(result.duration, fixture.duration, accuracy: 0.01, "Duration should match fixture")
         XCTAssertGreaterThanOrEqual(result.chordSegments.count, 0, "Should return valid segment count")

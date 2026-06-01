@@ -6,9 +6,10 @@ import Accelerate
 /// **Basic Pitch** Core ML model (Apache-2.0; see `NOTICE` and
 /// `docs/security/basic-pitch-2026-05-31.md`).
 ///
-/// Phase 1 of the 0.0.14 adoption (`specs/0.0.14-basic-pitch-adoption.md`): purely additive.
-/// This type does **not** touch `AudioExtractor`, `PitchDetector`, `OnsetDetector`, or any
-/// `Result` type — it is a standalone transcriber, safe to delete.
+/// Basic Pitch adoption (`specs/0.0.14-basic-pitch-adoption.md`). As of 0.1.0 this transcriber is the
+/// sole note/chord front-end behind `AudioExtractor.extract` — the hand-rolled YIN / FFT-chroma DSP
+/// path (and its `PitchDetector` / `OnsetDetector`) was removed, so this is no longer additive or
+/// standalone.
 ///
 /// ## Verified model I/O (against `spotify/basic-pitch` @ fa5997af, release v0.4.0)
 /// - Input  `input_2`  : mono window, `(1, 43844, 1)` float, 22050 Hz.

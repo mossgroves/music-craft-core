@@ -2,9 +2,10 @@ import Foundation
 
 /// Offline audio analysis pipeline producing chord progressions, key, contour, and detected notes from a PCM buffer.
 ///
-/// AudioExtractor composes DSP primitives (OnsetDetector, NoiseCalibrator, PitchDetector, ChromaExtractor),
-/// chord detection (ChordDetector), and music theory inference (ProgressionAnalyzer, MelodyKeyInference)
-/// to analyze a complete audio buffer and return comprehensive musical descriptors.
+/// AudioExtractor transcribes the buffer with a bundled **Basic Pitch** Core ML model and derives every
+/// `Result` field from the note transcription: note-native chord segments (`NoteChordIdentifier`), key
+/// (`ProgressionAnalyzer` over the chords, with a `MelodyKeyInference` fallback), a melodic contour, and the
+/// raw detected notes.
 ///
 /// **Key inference strategy:**
 /// 1. If chord segments produce a usable progression (≥2 distinct chords), use ProgressionAnalyzer.inferKey (chord-based).
@@ -14,14 +15,14 @@ import Foundation
 /// This two-path approach leverages the strongest signal available: chord progressions when the audio contains
 /// harmonic content, pitch class distributions when it contains melody only.
 ///
-/// **Note source:** `Configuration.noteSource` selects the front-end. `.dsp` (default) is the pipeline described
-/// above. `.basicPitch` derives the same `Result` from a bundled Basic Pitch Core ML transcription + note-native
-/// chords (full-polyphony key via chords, a skyline melodic reduction for `detectedNotes`/`contour`); the `Result`
-/// shape is identical, so callers need no change.
+/// **Note/chord source:** the bundled Basic Pitch model is the single transcription front-end (the hand-rolled
+/// YIN + FFT-chroma DSP pipeline was removed in 0.1.0). `detectedNotes` is the full polyphonic transcription
+/// (key/harmony read the harmonic content from it); `contour` is a melodic-skyline reduction of the same notes;
+/// `chordSegments` are note-native names over 1 s windows.
 ///
-/// **Pure function:** the `.dsp` path does no I/O, no async, no AVFoundation — all input is a PCM buffer, all output
-/// typed Swift values. The `.basicPitch` path loads a bundled Core ML model the first time it runs (once,
-/// process-wide), so the "no I/O" property holds only for `.dsp`.
+/// **I/O:** the model is loaded the first time `extract` runs (once, process-wide via a cached `static let`), so
+/// the type is no longer a pure / no-I/O function. If the model can't load, `extract` degrades to a well-formed
+/// empty `Result` rather than crashing.
 public enum AudioExtractor {
 
     /// Extract chord segments, key, melodic contour, and detected notes from an audio buffer.
@@ -29,90 +30,18 @@ public enum AudioExtractor {
     /// - Parameters:
     ///   - buffer: Mono Float32 PCM samples.
     ///   - sampleRate: Sample rate in Hz (typically 44100 or 48000).
-    ///   - configuration: Optional tuning. Defaults are calibrated for Cantus's nylon-string and Sanctuary's vocal/instrumental capture.
+    ///   - configuration: Optional tuning. Retained for API compatibility; the Basic Pitch front-end derives
+    ///     its own note events, so the legacy DSP-tuning fields are vestigial under the current path.
     /// - Returns: Bundled extraction result.
     public static func extract(
         buffer: [Float],
         sampleRate: Double,
         configuration: Configuration = .default
     ) -> Result {
-        // Note-source switch (additive; default .dsp). The .basicPitch path uses Basic Pitch
-        // transcription + note-native chords; the .dsp path below is the original pipeline, verbatim.
-        if configuration.noteSource == .basicPitch {
-            return extractViaBasicPitch(buffer: buffer, sampleRate: sampleRate, configuration: configuration)
-        }
-
-        // Calibrate noise baseline from silence frames
-        let noiseBaseline = NoiseCalibrator.calibrateBaseline(
-            buffer: buffer,
-            sampleRate: sampleRate,
-            windowSize: configuration.chromaWindowSize,
-            hopSize: configuration.chromaHopSize,
-            silenceThreshold: configuration.silenceThreshold
-        )
-
-        // Detect onsets
-        let onsets = OnsetDetector.detectOnsets(
-            buffer: buffer,
-            sampleRate: sampleRate,
-            configuration: OnsetDetector.Configuration(
-                windowSize: configuration.chromaWindowSize,
-                hopSize: configuration.chromaHopSize,
-                minGapMs: configuration.onsetMinGapMs,
-                energyMultiplier: configuration.onsetEnergyMultiplier,
-                energyFloor: configuration.onsetEnergyFloor
-            )
-        )
-
-        // Extract chords from segments
-        let chordSegments = extractChordSegments(
-            buffer: buffer,
-            sampleRate: sampleRate,
-            onsets: onsets,
-            noiseBaseline: noiseBaseline,
-            configuration: configuration
-        )
-
-        // Detect pitch track and segment into notes
-        let detectedNotes = detectNotes(
-            buffer: buffer,
-            sampleRate: sampleRate,
-            onsets: onsets,
-            configuration: configuration
-        )
-
-        // Derive contour from detected notes
-        let contour = deriveContour(from: detectedNotes)
-
-        // Infer key: chord-based first, fallback to pitch-class-based
-        let key = inferKey(from: chordSegments, fallbackNotes: detectedNotes)
-
-        let duration = TimeInterval(buffer.count) / sampleRate
-
-        return Result(
-            chordSegments: chordSegments,
-            key: key,
-            contour: contour,
-            detectedNotes: detectedNotes,
-            duration: duration
-        )
-    }
-
-    // MARK: - Basic Pitch note source
-
-    /// Process-wide cached Basic Pitch transcriber. A Swift `static let` is initialized exactly once
-    /// (lazily, thread-safe), so the bundled Core ML model is compiled + loaded a single time and
-    /// reused across every `extract(.basicPitch)` call — no per-call recompile. `nil` if the model
-    /// can't load (the `.basicPitch` path then degrades to a well-formed empty Result; default is `.dsp`).
-    private static let sharedBasicPitchTranscriber: BasicPitchTranscriber? = try? BasicPitchTranscriber()
-
-    /// `.basicPitch` path: transcribe once, then derive every `Result` field, reusing the existing
-    /// `deriveContour` / `inferKey` / `Result` machinery. `Result` shape is identical to `.dsp`.
-    private static func extractViaBasicPitch(buffer: [Float], sampleRate: Double, configuration: Configuration) -> Result {
         let duration = TimeInterval(buffer.count) / sampleRate
         guard let transcriber = sharedBasicPitchTranscriber,
               let transcription = try? transcriber.transcribe(buffer, sampleRate: sampleRate) else {
-            // Model unavailable → never crash; emit a well-formed empty Result.
+            // Model unavailable (or buffer empty) → never crash; emit a well-formed empty Result.
             return Result(chordSegments: [], key: nil, contour: [], detectedNotes: [], duration: duration)
         }
         let notes = transcription.notes
@@ -132,6 +61,14 @@ public enum AudioExtractor {
         let key = inferKey(from: chordSegments, fallbackNotes: detectedNotes)           // chord-based first, full-poly fallback
         return Result(chordSegments: chordSegments, key: key, contour: contour, detectedNotes: detectedNotes, duration: duration)
     }
+
+    // MARK: - Basic Pitch note source
+
+    /// Process-wide cached Basic Pitch transcriber. A Swift `static let` is initialized exactly once
+    /// (lazily, thread-safe), so the bundled Core ML model is compiled + loaded a single time and
+    /// reused across every `extract` call — no per-call recompile. `nil` if the model can't load
+    /// (the path then degrades to a well-formed empty Result).
+    private static let sharedBasicPitchTranscriber: BasicPitchTranscriber? = try? BasicPitchTranscriber()
 
     /// Note-native chord segments from full polyphony: 1.0 s window / 0.5 s hop (single window if the
     /// clip is shorter than one window), each window weighted by `overlapSeconds × velocity` per pitch
@@ -223,14 +160,11 @@ public enum AudioExtractor {
 
     // MARK: - Configuration
 
-    /// Selects the note/chord front-end for `extract`. `.dsp` (default) is the original
-    /// YIN + FFT-chroma pipeline; `.basicPitch` uses the bundled Basic Pitch model + note-native chords.
-    public enum NoteSource: String, Equatable, Hashable, Sendable, CaseIterable {
-        case dsp          // current YIN + FFT-chroma path (default)
-        case basicPitch   // Basic Pitch transcription + note-native chords
-    }
-
     /// Tuning parameters for audio extraction.
+    ///
+    /// These fields tuned the removed YIN + FFT-chroma DSP pipeline and are now vestigial under the
+    /// Basic Pitch front-end. They are retained so existing call sites (`Configuration()` / `.default`)
+    /// stay source-compatible; the Basic Pitch path does not read them.
     public struct Configuration: Equatable, Hashable, Sendable {
         /// Minimum gap between successive onsets in milliseconds. Default 500.
         public let onsetMinGapMs: Double
@@ -250,8 +184,6 @@ public enum AudioExtractor {
         public let extractionMinConfidence: Double
         /// Silence threshold (RMS) for noise calibration. Default 0.001 (-60dB).
         public let silenceThreshold: Float
-        /// Note/chord front-end. Default `.dsp` (current behavior — flipping to `.basicPitch` is opt-in).
-        public let noteSource: NoteSource
 
         /// Creates a Configuration with custom parameters.
         public init(
@@ -263,8 +195,7 @@ public enum AudioExtractor {
             earlyFrameAttackSkip: Int = 2,
             earlyFrameWindowSize: Int = 8,
             extractionMinConfidence: Double = 0.25,
-            silenceThreshold: Float = 0.001,
-            noteSource: NoteSource = .dsp
+            silenceThreshold: Float = 0.001
         ) {
             self.onsetMinGapMs = onsetMinGapMs
             self.onsetEnergyMultiplier = onsetEnergyMultiplier
@@ -275,10 +206,9 @@ public enum AudioExtractor {
             self.earlyFrameWindowSize = earlyFrameWindowSize
             self.extractionMinConfidence = extractionMinConfidence
             self.silenceThreshold = silenceThreshold
-            self.noteSource = noteSource
         }
 
-        /// Default configuration tuned for Cantus's guitar capture.
+        /// Default configuration.
         public static let `default` = Configuration()
     }
 
@@ -356,154 +286,6 @@ public enum AudioExtractor {
     }
 
     // MARK: - Private helpers
-
-    private static func extractChordSegments(
-        buffer: [Float],
-        sampleRate: Double,
-        onsets: [TimeInterval],
-        noiseBaseline: NoiseBaseline?,
-        configuration: Configuration
-    ) -> [ChordSegment] {
-        // Build segments from onsets
-        guard !onsets.isEmpty else { return [] }
-
-        var segments: [ChordSegment] = []
-        let chromaExtractor = ChromaExtractor(bufferSize: configuration.chromaWindowSize, sampleRate: sampleRate)
-        let chordDetector = ChordDetector(sampleRate: sampleRate, bufferSize: configuration.chromaWindowSize, chromaTemplateLibrary: CanonicalChromaLibrary())
-
-        for i in 0..<onsets.count {
-            let startSample = Int(onsets[i] * sampleRate)
-            let endSample: Int
-            if i + 1 < onsets.count {
-                endSample = Int(onsets[i + 1] * sampleRate)
-            } else {
-                endSample = buffer.count
-            }
-
-            // Minimum segment length check
-            guard endSample - startSample >= configuration.chromaWindowSize else { continue }
-
-            // Extract chroma with early-frame windowing and averaging
-            var chromas: [[Double]] = []
-            var pos = startSample + (configuration.earlyFrameAttackSkip * configuration.chromaHopSize)
-
-            while pos + configuration.chromaWindowSize <= endSample && chromas.count < configuration.earlyFrameWindowSize {
-                let slice = Array(buffer[pos..<(pos + configuration.chromaWindowSize)])
-                var chroma = slice.withUnsafeBufferPointer { ptr in
-                    chromaExtractor.extractChroma(buffer: UnsafeMutablePointer(mutating: ptr.baseAddress!), count: configuration.chromaWindowSize)
-                }
-
-                // Subtract noise baseline if available
-                if let baseline = noiseBaseline {
-                    for j in 0..<12 {
-                        chroma[j] = max(0, chroma[j] - baseline.chroma[j])
-                    }
-                }
-
-                chromas.append(chroma)
-                pos += configuration.chromaHopSize
-            }
-
-            guard !chromas.isEmpty else { continue }
-
-            // Average chroma vectors
-            var avgChroma = [Double](repeating: 0, count: 12)
-            for chroma in chromas {
-                for j in 0..<12 {
-                    avgChroma[j] += chroma[j]
-                }
-            }
-            for j in 0..<12 {
-                avgChroma[j] /= Double(chromas.count)
-            }
-
-            // Detect chord
-            guard let result = chordDetector.detectChord(chroma: avgChroma) else { continue }
-
-            // Check minimum confidence threshold
-            let minConfidence = chromas.count >= 5 ? configuration.extractionMinConfidence : 0.35
-
-            if result.chord.confidence >= minConfidence {
-                segments.append(ChordSegment(
-                    startTime: onsets[i],
-                    endTime: i + 1 < onsets.count ? onsets[i + 1] : TimeInterval(buffer.count) / sampleRate,
-                    chord: result.chord,
-                    confidence: result.chord.confidence,
-                    detectionMethod: .classifier
-                ))
-            }
-        }
-
-        return segments
-    }
-
-    private static func detectNotes(
-        buffer: [Float],
-        sampleRate: Double,
-        onsets: [TimeInterval],
-        configuration: Configuration
-    ) -> [DetectedNote] {
-        // Run pitch detector on the entire buffer
-        let pitchDetector = PitchDetector(sampleRate: sampleRate, bufferSize: 4096, threshold: 0.1)
-        var frameNotes: [(frame: Int, pitch: Double, confidence: Double)] = []
-
-        var pos = 0
-        while pos + 4096 <= buffer.count {
-            let slice = Array(buffer[pos..<(pos + 4096)])
-            let result = slice.withUnsafeBufferPointer { ptr in
-                pitchDetector.detectPitch(buffer: UnsafeMutablePointer(mutating: ptr.baseAddress!), count: 4096)
-            }
-
-            if let result = result, result.confidence > 0.1 {
-                frameNotes.append((frame: pos, pitch: result.frequency, confidence: result.confidence))
-            }
-
-            pos += 2048  // 50% overlap
-        }
-
-        guard !frameNotes.isEmpty else { return [] }
-
-        // Segment frame notes into detected note events using onset boundaries
-        var detectedNotes: [DetectedNote] = []
-
-        for i in 0..<onsets.count {
-            let onsetSample = Int(onsets[i] * sampleRate)
-            let nextOnsetSample = i + 1 < onsets.count ? Int(onsets[i + 1] * sampleRate) : buffer.count
-
-            // Find stable pitch within this onset-bounded region
-            let regionNotes = frameNotes.filter { $0.frame >= onsetSample && $0.frame < nextOnsetSample }
-            guard !regionNotes.isEmpty else { continue }
-
-            // Take the most frequent pitch in this region
-            var pitchCounts: [Double: (count: Int, confidence: Double)] = [:]
-            for note in regionNotes {
-                let roundedPitch = (note.pitch * 2).rounded() / 2  // Quantize to 50-cent bins
-                if pitchCounts[roundedPitch] == nil {
-                    pitchCounts[roundedPitch] = (count: 0, confidence: 0)
-                }
-                pitchCounts[roundedPitch]!.count += 1
-                pitchCounts[roundedPitch]!.confidence = note.confidence
-            }
-
-            guard let (frequency, data) = pitchCounts.max(by: { $0.value.count < $1.value.count }) else { continue }
-
-            // Convert frequency to MIDI note
-            let midiNote = Int(round(12 * (log2(frequency / 440.0) + 4.75)))
-            guard midiNote >= 0 && midiNote <= 127 else { continue }
-
-            let onsetTime = onsets[i]
-            let duration = TimeInterval(nextOnsetSample - onsetSample) / sampleRate
-
-            detectedNotes.append(DetectedNote(
-                midiNote: midiNote,
-                onsetTime: onsetTime,
-                duration: duration,
-                confidence: data.confidence
-            ))
-        }
-
-        return detectedNotes
-    }
 
     private static func deriveContour(from detectedNotes: [DetectedNote]) -> [ContourNote] {
         guard !detectedNotes.isEmpty else { return [] }

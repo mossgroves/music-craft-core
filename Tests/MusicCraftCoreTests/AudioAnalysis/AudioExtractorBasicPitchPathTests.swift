@@ -2,28 +2,21 @@ import XCTest
 import AVFoundation
 @testable import MusicCraftCore
 
-/// Tests for the additive `AudioExtractor` note-source switch (`.dsp` default / `.basicPitch`).
-/// Assertions are STRUCTURAL — accuracy is the bench's job (`BasicPitchVsCurrentChordBench`); these
-/// only guarantee the default is unchanged and the `.basicPitch` path returns a well-formed `Result`.
-final class AudioExtractorNoteSourceTests: XCTestCase {
+/// Structural tests for `AudioExtractor.extract` — the single Basic Pitch + note-native path (the
+/// `.dsp` note-source switch was removed in 0.1.0). Assertions are STRUCTURAL — accuracy is scored in
+/// `RealAudioChordTests` and the `BasicPitchChordBench`; these only guarantee the path returns a
+/// well-formed `Result` from real audio.
+final class AudioExtractorBasicPitchPathTests: XCTestCase {
 
-    func testDefaultNoteSourceIsDSP() {
-        XCTAssertEqual(AudioExtractor.Configuration().noteSource, .dsp)
-        XCTAssertEqual(AudioExtractor.Configuration.default.noteSource, .dsp)
+    func testConfigurationIsValueType() {
+        XCTAssertEqual(AudioExtractor.Configuration(), AudioExtractor.Configuration.default)
+        XCTAssertEqual(Set([AudioExtractor.Configuration.default]).count, 1)   // Hashable
     }
 
-    func testConfigurationIsValueTypeAndHashable() {
-        let dsp = AudioExtractor.Configuration(noteSource: .dsp)
-        let bp = AudioExtractor.Configuration(noteSource: .basicPitch)
-        XCTAssertNotEqual(dsp, bp)
-        XCTAssertEqual(Set([dsp, bp]).count, 2)            // distinct & Hashable
-        XCTAssertEqual(dsp, AudioExtractor.Configuration()) // default really is .dsp
-    }
-
-    func testBasicPitchProducesWellFormedResult() throws {
+    func testExtractProducesWellFormedResult() throws {
         guard let gadaDir = fixturesDir(named: "real-audio/gada") else { throw XCTSkip("GADA fixtures not available") }
-        // Skip cleanly where Core ML can't load the bundled model (the .basicPitch path degrades to
-        // an empty Result there; the device/Xcode run is authoritative).
+        // Skip cleanly where Core ML can't load the bundled model (the path degrades to an empty
+        // Result there; the device/Xcode run is authoritative).
         do { _ = try BasicPitchTranscriber() }
         catch { throw XCTSkip("Bundled Core ML model could not load under this runner (\(error)).") }
 
@@ -35,13 +28,10 @@ final class AudioExtractorNoteSourceTests: XCTestCase {
         let label = wav.lastPathComponent.components(separatedBy: "_").dropFirst().first ?? "?"   // GADA: parts[1]
         guard let (samples, sr) = loadMono(wav) else { throw XCTSkip("could not decode \(wav.lastPathComponent)") }
 
-        let result = AudioExtractor.extract(
-            buffer: samples, sampleRate: sr,
-            configuration: AudioExtractor.Configuration(noteSource: .basicPitch)
-        )
+        let result = AudioExtractor.extract(buffer: samples, sampleRate: sr)
 
         // Structural well-formedness (no accuracy gate).
-        XCTAssertFalse(result.chordSegments.isEmpty, "expected at least one chord segment from .basicPitch")
+        XCTAssertFalse(result.chordSegments.isEmpty, "expected at least one chord segment from extract")
         XCTAssertGreaterThan(result.duration, 0)
         for seg in result.chordSegments {
             XCTAssertGreaterThanOrEqual(seg.endTime, seg.startTime, "segment end must be ≥ start")
@@ -53,7 +43,7 @@ final class AudioExtractorNoteSourceTests: XCTestCase {
         // Print (not assert) the detected chord vs label and the inferred key.
         let detected = result.chordSegments.first?.chord.displayName ?? "—"
         let keyStr = result.key?.displayName ?? "nil"
-        print("\n[.basicPitch] \(wav.lastPathComponent): label \(label) → first chord \(detected); "
+        print("\n[extract] \(wav.lastPathComponent): label \(label) → first chord \(detected); "
             + "key \(keyStr); segments \(result.chordSegments.count); notes \(result.detectedNotes.count); contour \(result.contour.count)\n")
     }
 
