@@ -128,6 +128,9 @@ public enum AudioExtractor {
             i = j + 1
         }
 
+        // Clean up pick-attack/release edge transients and same-root sus/added flicker (0.1.1).
+        runs = cleanupRuns(runs, duration: duration)
+
         // Assign contiguous, non-overlapping end times (next run's start, or duration for the last).
         return runs.enumerated().map { (k, r) in
             let end = k + 1 < runs.count ? runs[k + 1].start : duration
@@ -135,6 +138,46 @@ public enum AudioExtractor {
             // a dedicated `.noteNative` case is a later additive option.
             return ChordSegment(startTime: r.start, endTime: end, chord: r.chord, confidence: r.conf, detectionMethod: .classifier)
         }
+    }
+
+    /// Note-native segment cleanup (0.1.1): trim weak pick-attack/release edge runs and absorb a single
+    /// sus/added-tone "flicker" run flanked by an identical same-root base (e.g. Am–Asus2–Am → Am).
+    /// Conservative by construction — it never touches a sole run, never trims a long or confident run,
+    /// and only merges a variant when both neighbours are the *same* chord, so real chord changes survive.
+    private static func cleanupRuns(_ input: [(start: Double, chord: Chord, conf: Double)],
+                                    duration: TimeInterval) -> [(start: Double, chord: Chord, conf: Double)] {
+        var runs = input
+        func span(_ idx: Int) -> Double { (idx + 1 < runs.count ? runs[idx + 1].start : duration) - runs[idx].start }
+
+        // (1) Edge trim: drop a leading/trailing run that is short (≤ one window-hop) AND low-confidence.
+        // Bench fixtures are a single sustained chord (one long run), so they are never edge-trimmed.
+        let edgeMaxSpan = 0.75, edgeMaxConf = 0.7
+        if runs.count >= 2, span(0) <= edgeMaxSpan, runs[0].conf < edgeMaxConf { runs.removeFirst() }
+        if runs.count >= 2, span(runs.count - 1) <= edgeMaxSpan, runs[runs.count - 1].conf < edgeMaxConf { runs.removeLast() }
+
+        // (2) Flicker absorb: a single interior run that shares its root with an identical chord on BOTH
+        // sides becomes that chord (Am–Asus2–Am → Am–Am–Am). Different flanks or a different root are
+        // left alone, so genuine chord changes are preserved.
+        if runs.count >= 3 {
+            for idx in 1..<(runs.count - 1) {
+                let prev = runs[idx - 1].chord, cur = runs[idx].chord, next = runs[idx + 1].chord
+                if prev.displayName == next.displayName, cur.root == prev.root, cur.displayName != prev.displayName {
+                    runs[idx].chord = prev
+                }
+            }
+        }
+
+        // (3) Re-collapse consecutive identical chord names (earliest start, count-weighted mean conf).
+        var merged: [(start: Double, chord: Chord, confSum: Double, n: Int)] = []
+        for r in runs {
+            if let last = merged.last, last.chord.displayName == r.chord.displayName {
+                merged[merged.count - 1].confSum += r.conf
+                merged[merged.count - 1].n += 1
+            } else {
+                merged.append((r.start, r.chord, r.conf, 1))
+            }
+        }
+        return merged.map { ($0.start, $0.chord, $0.confSum / Double($0.n)) }
     }
 
     /// First-pass melodic reduction: the highest-pitched sounding note at each instant, emitted as a
