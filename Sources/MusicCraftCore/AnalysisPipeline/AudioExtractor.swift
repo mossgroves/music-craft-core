@@ -14,7 +14,14 @@ import Foundation
 /// This two-path approach leverages the strongest signal available: chord progressions when the audio contains
 /// harmonic content, pitch class distributions when it contains melody only.
 ///
-/// **Pure function:** No I/O, no async, no AVFoundation. All input is a PCM buffer; all output is typed Swift values.
+/// **Note source:** `Configuration.noteSource` selects the front-end. `.dsp` (default) is the pipeline described
+/// above. `.basicPitch` derives the same `Result` from a bundled Basic Pitch Core ML transcription + note-native
+/// chords (full-polyphony key via chords, a skyline melodic reduction for `detectedNotes`/`contour`); the `Result`
+/// shape is identical, so callers need no change.
+///
+/// **Pure function:** the `.dsp` path does no I/O, no async, no AVFoundation — all input is a PCM buffer, all output
+/// typed Swift values. The `.basicPitch` path loads a bundled Core ML model the first time it runs (once,
+/// process-wide), so the "no I/O" property holds only for `.dsp`.
 public enum AudioExtractor {
 
     /// Extract chord segments, key, melodic contour, and detected notes from an audio buffer.
@@ -29,6 +36,12 @@ public enum AudioExtractor {
         sampleRate: Double,
         configuration: Configuration = .default
     ) -> Result {
+        // Note-source switch (additive; default .dsp). The .basicPitch path uses Basic Pitch
+        // transcription + note-native chords; the .dsp path below is the original pipeline, verbatim.
+        if configuration.noteSource == .basicPitch {
+            return extractViaBasicPitch(buffer: buffer, sampleRate: sampleRate, configuration: configuration)
+        }
+
         // Calibrate noise baseline from silence frames
         let noiseBaseline = NoiseCalibrator.calibrateBaseline(
             buffer: buffer,
@@ -85,7 +98,127 @@ public enum AudioExtractor {
         )
     }
 
+    // MARK: - Basic Pitch note source
+
+    /// Process-wide cached Basic Pitch transcriber. A Swift `static let` is initialized exactly once
+    /// (lazily, thread-safe), so the bundled Core ML model is compiled + loaded a single time and
+    /// reused across every `extract(.basicPitch)` call — no per-call recompile. `nil` if the model
+    /// can't load (the `.basicPitch` path then degrades to a well-formed empty Result; default is `.dsp`).
+    private static let sharedBasicPitchTranscriber: BasicPitchTranscriber? = try? BasicPitchTranscriber()
+
+    /// `.basicPitch` path: transcribe once, then derive every `Result` field, reusing the existing
+    /// `deriveContour` / `inferKey` / `Result` machinery. `Result` shape is identical to `.dsp`.
+    private static func extractViaBasicPitch(buffer: [Float], sampleRate: Double, configuration: Configuration) -> Result {
+        let duration = TimeInterval(buffer.count) / sampleRate
+        guard let transcriber = sharedBasicPitchTranscriber,
+              let transcription = try? transcriber.transcribe(buffer, sampleRate: sampleRate) else {
+            // Model unavailable → never crash; emit a well-formed empty Result.
+            return Result(chordSegments: [], key: nil, contour: [], detectedNotes: [], duration: duration)
+        }
+        let notes = transcription.notes
+        let chordSegments = noteNativeChordSegments(notes: notes, duration: duration)   // FULL polyphony → note-native (the validated win)
+        let detectedNotes = skyline(of: notes)                                          // monophonic melodic reduction
+        let contour = deriveContour(from: detectedNotes)                                // REUSE existing contour
+        let key = inferKey(from: chordSegments, fallbackNotes: detectedNotes)           // REUSE existing key inference (chord-based first)
+        return Result(chordSegments: chordSegments, key: key, contour: contour, detectedNotes: detectedNotes, duration: duration)
+    }
+
+    /// Note-native chord segments from full polyphony: 1.0 s window / 0.5 s hop (single window if the
+    /// clip is shorter than one window), each window weighted by `overlapSeconds × velocity` per pitch
+    /// class with the lowest sounding note as bass, named by `NoteChordIdentifier`. Consecutive identical
+    /// names collapse into contiguous, non-overlapping `ChordSegment`s.
+    private static func noteNativeChordSegments(notes: [TranscribedNote], duration: TimeInterval) -> [ChordSegment] {
+        guard !notes.isEmpty, duration > 0 else { return [] }
+        let windowLen = 1.0, hop = 0.5
+
+        var starts: [Double] = []
+        if duration <= windowLen { starts = [0] }
+        else { var s = 0.0; while s < duration { starts.append(s); s += hop } }
+
+        // Per-window identified chord (nil where none), with its [start, end] and confidence.
+        var win: [(start: Double, chord: Chord?, conf: Double)] = []
+        for s in starts {
+            let e = min(s + windowLen, duration)
+            var bins = [Double](repeating: 0, count: 12)
+            var lowest = Int.max
+            for n in notes {
+                let overlap = max(0, min(n.onsetTime + n.duration, e) - max(n.onsetTime, s))
+                guard overlap > 0 else { continue }
+                bins[((n.pitchMIDI % 12) + 12) % 12] += overlap * max(0, n.velocity)
+                if n.pitchMIDI < lowest { lowest = n.pitchMIDI }
+            }
+            let bass = lowest == Int.max ? nil : ((lowest % 12) + 12) % 12
+            let id = NoteChordIdentifier.identify(weightedPitchClasses: bins, bassPitchClass: bass)
+            win.append((s, id?.chord, id?.confidence ?? 0))
+        }
+
+        // Collapse consecutive identical chord names into runs (start + mean confidence).
+        var runs: [(start: Double, chord: Chord, conf: Double)] = []
+        var i = 0
+        while i < win.count {
+            guard let chord = win[i].chord else { i += 1; continue }
+            var j = i
+            while j + 1 < win.count, let next = win[j + 1].chord, next.displayName == chord.displayName { j += 1 }
+            let confs = win[i...j].map { $0.conf }
+            runs.append((win[i].start, chord, confs.reduce(0, +) / Double(confs.count)))
+            i = j + 1
+        }
+
+        // Assign contiguous, non-overlapping end times (next run's start, or duration for the last).
+        return runs.enumerated().map { (k, r) in
+            let end = k + 1 < runs.count ? runs[k + 1].start : duration
+            // Reuse the existing `.classifier` DetectionMethod case — the enum is frozen for Sanctuary;
+            // a dedicated `.noteNative` case is a later additive option.
+            return ChordSegment(startTime: r.start, endTime: end, chord: r.chord, confidence: r.conf, detectionMethod: .classifier)
+        }
+    }
+
+    /// First-pass melodic reduction: the highest-pitched sounding note at each instant, emitted as a
+    /// monophonic `[DetectedNote]` (preserves the field's "monophonic melodic events" semantics).
+    private static func skyline(of notes: [TranscribedNote]) -> [DetectedNote] {
+        guard !notes.isEmpty else { return [] }
+        var boundsSet = Set<Double>()
+        for n in notes { boundsSet.insert(n.onsetTime); boundsSet.insert(n.onsetTime + n.duration) }
+        let times = boundsSet.sorted()
+        guard times.count >= 2 else { return [] }
+
+        // Highest active note per slice (sampled at the slice midpoint).
+        var sliceTop: [(midi: Int, vel: Double)?] = []
+        for k in 0..<(times.count - 1) {
+            let mid = (times[k] + times[k + 1]) / 2
+            var top: TranscribedNote?
+            for n in notes where n.onsetTime <= mid && mid < n.onsetTime + n.duration {
+                if top == nil || n.pitchMIDI > top!.pitchMIDI { top = n }
+            }
+            sliceTop.append(top.map { ($0.pitchMIDI, $0.velocity) })
+        }
+
+        // Merge consecutive slices that share a top pitch into single monophonic notes.
+        var out: [DetectedNote] = []
+        var k = 0
+        while k < sliceTop.count {
+            guard let cur = sliceTop[k] else { k += 1; continue }
+            var j = k
+            while j + 1 < sliceTop.count, let nxt = sliceTop[j + 1], nxt.midi == cur.midi { j += 1 }
+            out.append(DetectedNote(
+                midiNote: cur.midi,
+                onsetTime: times[k],
+                duration: max(0.001, times[j + 1] - times[k]),
+                confidence: min(1, max(0.1, cur.vel))
+            ))
+            k = j + 1
+        }
+        return out
+    }
+
     // MARK: - Configuration
+
+    /// Selects the note/chord front-end for `extract`. `.dsp` (default) is the original
+    /// YIN + FFT-chroma pipeline; `.basicPitch` uses the bundled Basic Pitch model + note-native chords.
+    public enum NoteSource: String, Equatable, Hashable, Sendable, CaseIterable {
+        case dsp          // current YIN + FFT-chroma path (default)
+        case basicPitch   // Basic Pitch transcription + note-native chords
+    }
 
     /// Tuning parameters for audio extraction.
     public struct Configuration: Equatable, Hashable, Sendable {
@@ -107,6 +240,8 @@ public enum AudioExtractor {
         public let extractionMinConfidence: Double
         /// Silence threshold (RMS) for noise calibration. Default 0.001 (-60dB).
         public let silenceThreshold: Float
+        /// Note/chord front-end. Default `.dsp` (current behavior — flipping to `.basicPitch` is opt-in).
+        public let noteSource: NoteSource
 
         /// Creates a Configuration with custom parameters.
         public init(
@@ -118,7 +253,8 @@ public enum AudioExtractor {
             earlyFrameAttackSkip: Int = 2,
             earlyFrameWindowSize: Int = 8,
             extractionMinConfidence: Double = 0.25,
-            silenceThreshold: Float = 0.001
+            silenceThreshold: Float = 0.001,
+            noteSource: NoteSource = .dsp
         ) {
             self.onsetMinGapMs = onsetMinGapMs
             self.onsetEnergyMultiplier = onsetEnergyMultiplier
@@ -129,6 +265,7 @@ public enum AudioExtractor {
             self.earlyFrameWindowSize = earlyFrameWindowSize
             self.extractionMinConfidence = extractionMinConfidence
             self.silenceThreshold = silenceThreshold
+            self.noteSource = noteSource
         }
 
         /// Default configuration tuned for Cantus's guitar capture.
