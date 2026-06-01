@@ -129,6 +129,68 @@ final class BasicPitchTranscriberTests: XCTestCase {
         XCTAssertEqual(out.duration, 0)
     }
 
+    // MARK: - Seam test (proves the overlapping-window fix)
+
+    /// A sustained tone LONGER than one window (≥5 s → multiple overlapping windows) must decode to
+    /// a continuous note that SPANS window boundaries — not one fragment per window — and must not
+    /// place a spurious onset at a window seam. Before overlapping windows + edge trimming, the
+    /// model's per-window edge degradation produced an activation dip at each seam that split the
+    /// note and could inject a boundary onset. This is the test that proves the fix.
+    func testLongToneIsContinuousAcrossWindowSeams() throws {
+        let t = try makeTranscriberOrSkip()
+        let sr = 22050.0
+        let seconds = 5.0
+        let audio = Self.sine(freq: 440, seconds: seconds, sampleRate: sr)   // A4, > 1 window
+        let out = try t.transcribe(audio, sampleRate: sr)
+        XCTAssertFalse(out.notes.isEmpty, "expected at least one note from a long steady tone")
+
+        // Unwrapped windows tile every framesKeptPerWindow frames; seams (seconds) are multiples of
+        // that — ≈1.649 s apart. A note longer than that spacing necessarily crosses a seam.
+        let spf = BasicPitchTranscriber.Constants.secondsPerFrame
+        let seamSpacing = Double(BasicPitchTranscriber.Constants.framesKeptPerWindow) * spf  // ≈1.649 s
+        let nWindows = Int((seconds * sr / Double(BasicPitchTranscriber.Constants.hopSize)).rounded(.up))
+
+        // (1) NOT one-fragment-per-window. Count only substantial notes (≥0.3 s) so tiny strays
+        // don't mask the test; a fragmented tone would yield one ~window-length note per window.
+        let substantial = out.notes.filter { $0.duration >= 0.3 }
+        XCTAssertLessThanOrEqual(substantial.count, max(1, nWindows - 1),
+            "long steady tone fragmented into ~one note per window: \(substantial.count) substantial notes, \(nWindows) windows")
+
+        // (2) A single continuous note spans a seam: the longest note exceeds the seam spacing
+        // (so it crosses ≥1 window boundary) and covers a majority of the signal.
+        let longest = out.notes.map(\.duration).max() ?? 0
+        XCTAssertGreaterThan(longest, seamSpacing,
+            "longest note \(longest)s did not exceed the \(seamSpacing)s window-seam spacing — not spanning seams")
+        XCTAssertGreaterThan(longest, 0.5 * seconds,
+            "longest note \(longest)s covers <50% of the \(seconds)s tone — likely seam-fragmented")
+
+        // (3) No spurious onset clustered at an interior window seam (a note legitimately starting
+        // near t=0 is exempt). Allow ±2 frames around each seam time.
+        let tol = 2.0 * spf
+        for k in 1..<nWindows {
+            let seam = Double(k) * seamSpacing
+            let offending = out.notes.filter { $0.onsetTime > 0.1 && abs($0.onsetTime - seam) <= tol }
+            XCTAssertTrue(offending.isEmpty,
+                "spurious onset(s) at window seam \(seam)s: \(offending.map(\.onsetTime))")
+        }
+    }
+
+    /// Alignment regression: overlapping windows must not shift timing. The front-pad and the first
+    /// window's leading edge-trim cancel, so first-window onsets are unchanged. A 440 Hz tone after
+    /// 0.5 s of silence should be detected with an onset near 0.5 s.
+    func testOnsetTimeAlignmentInFirstWindow() throws {
+        let t = try makeTranscriberOrSkip()
+        let sr = 22050.0
+        let silence = [Float](repeating: 0, count: Int(0.5 * sr))
+        let tone = Self.sine(freq: 440, seconds: 1.0, sampleRate: sr)
+        let out = try t.transcribe(silence + tone, sampleRate: sr)
+        guard let a4 = out.notes.filter({ abs($0.pitchMIDI - 69) <= 1 }).min(by: { $0.onsetTime < $1.onsetTime }) else {
+            return XCTFail("expected an A4-ish note for the 440 Hz tone")
+        }
+        XCTAssertEqual(a4.onsetTime, 0.5, accuracy: 0.12,
+            "onset of a tone starting at 0.5 s should be ~0.5 s (alignment preserved), got \(a4.onsetTime)")
+    }
+
     // MARK: - Helpers
 
     private static func sine(freq: Double, seconds: Double, sampleRate: Double) -> [Float] {

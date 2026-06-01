@@ -93,26 +93,46 @@ public struct BasicPitchTranscriber {
         let clean = samples.map { $0.isFinite ? $0 : 0 }
         let resampled = Self.resample(clean, from: sampleRate, to: Constants.sampleRate)
 
-        // Window into fixed AUDIO_N_SAMPLES chunks (zero-padded tail). PHASE-1 SIMPLIFICATION:
-        // non-overlapping windows. Upstream overlaps windows by 30 frames to suppress
-        // boundary artifacts and trims them on unwrap; we omit the overlap here (documented
-        // deviation — revisit if device validation shows boundary artifacts).
+        // Overlapping windows + seam trimming, matching upstream basic_pitch unwrap
+        // (spotify/basic-pitch @ fa5997af — get_audio_input / window_audio_file / unwrap_output).
+        // Front-pad by overlapLen/2 zeros so the first window's trimmed leading frames are padding
+        // (keeps t=0 aligned: the front-pad is exactly framesTrimmedPerEdge frames, which the
+        // edge-trim then removes); stride hopSize (overlapping); zero-pad the tail window to
+        // nSamples; trim framesTrimmedPerEdge frames from BOTH ends of EACH window's output before
+        // concatenating; finally trim the concatenation to the frame count for the original
+        // (unpadded) length. Because the front-pad and the first window's leading trim cancel, the
+        // existing `frame * secondsPerFrame + alignmentOffset` time mapping is preserved.
+        let frontPad = Constants.overlapLen / 2          // int(overlap_len / 2) = 3840 samples
+        var padded = [Float](repeating: 0, count: frontPad)
+        padded.append(contentsOf: resampled)
+
         var frames: [[Double]] = []   // F × 88   (note activations)
         var onsets: [[Double]] = []   // F × 88
         var contourRows: [[Double]] = [] // F × 264
 
         var start = 0
-        while start < resampled.count {
-            var window = Array(resampled[start ..< min(start + Constants.nSamples, resampled.count)])
+        while start < padded.count {
+            var window = Array(padded[start ..< min(start + Constants.nSamples, padded.count)])
             if window.count < Constants.nSamples {
                 window.append(contentsOf: repeatElement(0, count: Constants.nSamples - window.count))
             }
             let (n, o, c) = try infer(window: window)
-            frames.append(contentsOf: n)
-            onsets.append(contentsOf: o)
-            contourRows.append(contentsOf: c)
-            start += Constants.nSamples
+            Self.appendTrimmingEdges(n, into: &frames)
+            Self.appendTrimmingEdges(o, into: &onsets)
+            Self.appendTrimmingEdges(c, into: &contourRows)
+            start += Constants.hopSize
         }
+
+        // Tail-trim to the number of frames upstream keeps for the original length:
+        //   int((audio_original_length / hop_size) * n_frames_per_window)   (unwrap_output)
+        // where audio_original_length is the resampled (pre-front-pad) sample count.
+        let keepFrames = min(
+            frames.count,
+            max(0, Int((Double(resampled.count) / Double(Constants.hopSize)) * Double(Constants.framesKeptPerWindow)))
+        )
+        frames = Array(frames.prefix(keepFrames))
+        onsets = Array(onsets.prefix(keepFrames))
+        contourRows = Array(contourRows.prefix(keepFrames))
 
         let minNoteLenFrames = Int((configuration.minNoteDurationMs / 1000.0 * Constants.framesPerSecond).rounded())
         let events = BasicPitchDecoder.outputToNotes(
@@ -143,6 +163,18 @@ public struct BasicPitchTranscriber {
         }
 
         return Transcription(notes: notes, contour: contour, duration: duration)
+    }
+
+    // MARK: - Unwrap
+
+    /// Append one window's output matrix, dropping `framesTrimmedPerEdge` frames from the start and
+    /// the end — upstream `unwrap_output`'s `output[:, n_olap:-n_olap, :]`, applied per window.
+    /// Defensive: if a window has too few frames to trim, it contributes nothing (a full window
+    /// emits `annotNFrames` (172) frames, so this guard is not expected to trigger in practice).
+    private static func appendTrimmingEdges(_ m: [[Double]], into acc: inout [[Double]]) {
+        let n = Constants.framesTrimmedPerEdge
+        guard m.count > 2 * n else { return }
+        acc.append(contentsOf: m[n ..< (m.count - n)])
     }
 
     // MARK: - Inference
@@ -244,6 +276,18 @@ public struct BasicPitchTranscriber {
         static let fftHop: Int = 256                 // FFT_HOP
         static let windowSeconds: Int = 2            // AUDIO_WINDOW_LENGTH
         static let nSamples: Int = 22050 * 2 - 256   // AUDIO_N_SAMPLES = 43844
+
+        // Overlapping-window unwrap (spotify/basic-pitch @ fa5997af — inference.py: run_inference,
+        // get_audio_input, window_audio_file, unwrap_output). Windows overlap by nOverlappingFrames;
+        // on unwrap, half that many frames are trimmed from each window edge (the model's
+        // predictions degrade at a window's temporal boundaries — this removes the seam artifacts).
+        static let nOverlappingFrames: Int = 30                       // DEFAULT_OVERLAPPING_FRAMES (inference.py)
+        static let overlapLen: Int = nOverlappingFrames * fftHop      // OVERLAP_LEN = 30*256 = 7680 samples
+        static let hopSize: Int = nSamples - overlapLen               // HOP_SIZE = 43844-7680 = 36164 samples
+        static let annotationsFps: Int = Int(sampleRate) / fftHop     // ANNOTATIONS_FPS = 22050//256 = 86 (floor)
+        static let annotNFrames: Int = annotationsFps * windowSeconds // ANNOT_N_FRAMES = 86*2 = 172
+        static let framesTrimmedPerEdge: Int = nOverlappingFrames / 2 // int(0.5*30) = 15
+        static let framesKeptPerWindow: Int = annotNFrames - nOverlappingFrames // 172-30 = 142
         static let nSemitones: Int = 88              // ANNOTATIONS_N_SEMITONES
         static let contourBinsPerSemitone: Int = 3   // CONTOURS_BINS_PER_SEMITONE
         static let midiOffset: Int = 21              // MIDI_OFFSET (A0)

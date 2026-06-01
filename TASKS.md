@@ -9,7 +9,7 @@
 ## Next Up
 
 1. **Basic Pitch — Phase 2 prerequisites** (gate the Phase 2 dual-path accuracy bench; deferred from 0.0.14 Phase 1):
-   - **Restore overlapping inference windows.** Upstream Basic Pitch overlaps successive 2 s windows by 30 frames and trims the seam on each side before concatenating; Phase 1 used **non-overlapping** windows for simplicity. Restore the overlap + seam-trim **BEFORE** the Phase 2 accuracy bench — otherwise the bench understates Basic Pitch (seam artifacts / boundary notes) and could mislead the chord-consolidation decision (the whole point of the bench).
+   - **~~Restore overlapping inference windows.~~ DONE (2026-05-31).** Upstream Basic Pitch overlaps successive 2 s windows by 30 frames and trims the seam on each side before concatenating; Phase 1 used non-overlapping windows for simplicity. Now ported faithfully (front-pad `OVERLAP_LEN/2`, stride `HOP_SIZE`, trim `N_OVERLAPPING_FRAMES/2` per window edge on unwrap, tail-trim to original length) — matches `spotify/basic-pitch` @ `fa5997af` `unwrap_output`. Seam artifacts gone (`testLongToneIsContinuousAcrossWindowSeams`), determinism + first-window alignment preserved. Done **before** the Phase 2 accuracy bench, as required.
    - **Refine `velocity`.** Phase 1 sets `TranscribedNote.velocity` to the mean note activation over the note's span (faithful to the ported `output_to_notes_polyphonic`). Refine only if the Phase 2 bench shows velocity materially affects downstream accuracy.
    - **Port pitch bends.** Phase 1 leaves `TranscribedNote.pitchBend == nil`. Port upstream `get_pitch_bends` (derives per-frame semitone deviation from the contour matrix) **before** the vocal pitch-contour view consumes it, so the UI isn't built against a nil field.
 

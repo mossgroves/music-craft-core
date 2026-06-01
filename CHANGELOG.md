@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — Basic Pitch transcriber, Phase 2 prerequisite (toward 0.0.15)
+- **Overlapping inference windows + seam trimming (matches upstream `unwrap`), removing window-boundary artifacts.** `BasicPitchTranscriber.transcribe(_:sampleRate:)` previously windowed audio into *non-overlapping* `AUDIO_N_SAMPLES` chunks and concatenated each window's full output, so the model's edge-degraded predictions stitched together into seam artifacts (split notes / spurious onsets) about every 2 s. It now mirrors `spotify/basic-pitch` @ `fa5997af` (`inference.py`: `get_audio_input` / `window_audio_file` / `unwrap_output`): front-pad by `OVERLAP_LEN/2` (3840) zeros, window with stride `HOP_SIZE` (36164) so windows overlap by `N_OVERLAPPING_FRAMES` (30), trim `N_OVERLAPPING_FRAMES/2` (15) frames from each window edge on unwrap, then tail-trim the concatenation to `int((origLen/HOP_SIZE) * (ANNOT_N_FRAMES − N_OVERLAPPING_FRAMES))` frames. Time alignment is preserved — the front-pad and the first window's leading edge-trim cancel exactly (15 frames each), so the existing `frame · secondsPerFrame + alignmentOffset` mapping is unchanged (verified: a tone after 0.5 s silence still onsets at ~0.5 s). New seam test (`testLongToneIsContinuousAcrossWindowSeams`): a 5 s tone now decodes to a continuous note spanning multiple window boundaries — not one fragment per window — with no seam-aligned onset. Determinism preserved. Yellow: changes the output of the public, currently-unwired `BasicPitchTranscriber` (no consumer yet); `AudioExtractor`/`PitchDetector`/`OnsetDetector`/`Result` and the decoder untouched.
+
 ## [0.0.14] - 2026-05-31
 
 ### Added — Basic Pitch adoption, Phase 1 (transcriber + bundled model; additive, no wiring)
