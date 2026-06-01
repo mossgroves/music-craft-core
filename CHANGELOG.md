@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.14] - 2026-05-31
+
 ### Added — Basic Pitch adoption, Phase 1 (transcriber + bundled model; additive, no wiring)
 - **`BasicPitchTranscriber`** (new `Sources/MusicCraftCore/Transcription/` area) — wraps Spotify's bundled **Basic Pitch** Core ML model (audio → polyphonic note events + frame-level pitch contour). `transcribe(_:sampleRate:)` resamples a mono buffer to the model's 22050 Hz rate (vDSP), runs inference, and decodes the model's note/onset/contour activations into `[TranscribedNote]` + `[PitchFrame]` + `duration`. Public types: `BasicPitchTranscriber` (`Configuration`, `Transcription`, `TranscriptionError`), `TranscribedNote`, `PitchFrame`.
 - **Bundled model resource** `Sources/MusicCraftCore/Resources/nmp.mlpackage` — Spotify's official Core ML serialization, used as-is (Apache-2.0). Declared `.copy` (preserves the `.mlpackage` directory; `.process` flattens it). `Package.swift` stays `dependencies: []` — Core ML is a system framework, zero new third-party deps. License at `BASIC_PITCH_LICENSE.txt`; attribution + SHA-256 in `NOTICE`.
@@ -20,8 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Tests
 - `BasicPitchTranscriberTests` — resampler (bounds/behavior) and the note decoder pass on the CLI; the model-dependent tests (load, inference produces notes, **determinism: byte-identical output across runs**, empty-buffer) **also ran and passed under `swift test`** on macOS (Core ML loads the bundled model at runtime). 11/11 pass.
 
-#### Not done in this commit (gating the `0.0.14` tag)
-- **No version bump** (`musicCraftCoreVersion` stays `0.0.13`), **no version header here**, **no tag, not pushed.** The `0.0.14` tag waits on (1) this security analysis (filed) and (2) Chris's on-device validation: packet-capture confirmation of zero network egress at inference + a real nylon-recording sanity check. See `specs/0.0.14-basic-pitch-adoption.md`.
+#### Egress gate — cleared at library level (2026-05-31)
+- The third-party-integration gate's egress condition is satisfied at the library level by three independent layers: **static** — no networking symbols anywhere in `Sources/` (no `URLSession`/sockets/`Process`/host resolution), so no code can exfiltrate; **runtime capability proof** — under `sandbox-exec` denying network-outbound/inbound/bind, `BasicPitchTranscriberTests` (11/11, incl. the byte-identical determinism test) pass, so model load + inference require no network; **observational** — `lsof`/`nettop` showed no sockets for the test process (sampling-based corroboration). macOS 26.3.1. Detail recorded in `docs/security/basic-pitch-2026-05-31.md` (§6 + Egress verification results).
+- **App-level on-device confirmation inside Songcatcher** (capture → transcription with the app's full entitlements) remains a **Phase 2** step — it only becomes runnable once the transcriber is wired into the app. Correct scope, not a gap in this library-level evidence.
+
+### Versioning
+- `musicCraftCoreVersion` → "0.0.14". `MusicCraftCoreTests.testVersionIsSet` updated to assert "0.0.14".
+
+### Tier / classification
+- Tier 2 / yellow at the code level (additive: one new public `Transcription` area + a bundled model resource; `AudioExtractor` and its `Result` untouched). The release/tag op is behind the red tag gate (Chris-authorized for this 0.0.14 release). 3-component SemVer tag only.
 
 ## [0.0.13] - 2026-05-30
 

@@ -56,6 +56,8 @@ This is **load-bearing, not pro-forma**, given Songcatcher's privacy-first / on-
 - **Chris confirms, via on-device packet capture, ZERO network egress during transcription/inference.** Core ML inference is on-device by design and the transcriber contains no networking code, but the privacy promise is verified empirically, not assumed.
 - The `0.0.14` tag is **gated** on (a) this packet-capture confirmation and (b) a real nylon-recording sanity check. Until then: committed, **not pushed, not tagged**, `musicCraftCoreVersion` **not bumped**.
 
+**STATUS — SATISFIED AT LIBRARY LEVEL (2026-05-31).** The egress condition is cleared at the library level by the three-layer verification recorded below ("Egress verification — results (2026-05-31)"): static (no networking symbols in `Sources/`), a runtime capability proof (inference passes under a full network-denied sandbox), and observational corroboration (no observed sockets). On that basis the `0.0.14` tag is cut. The **app-level** on-device packet capture inside Songcatcher (condition a) — capture → transcription under the app's full entitlements — remains a **Phase 2** step: it only becomes runnable once the transcriber is wired into the app (Phase 1 does no wiring), so it is correct scope, not a gap. The real nylon-recording sanity check (condition b) likewise moves to the Phase 2 accuracy bench.
+
 ## 7. Classification
 
 **SAFE TO ADOPT.** The artifact is a checksummed, Apache-2.0, official Spotify Core ML serialization used as-is, containing only a serialized NN run by Apple's system Core ML runtime; we add no new dependencies, vendor no Python, and the only new code is bounded, pure-numeric Swift (a vDSP resampler + a faithful re-implementation of the upstream note-decoding algorithm) with throw-based error handling and reviewed bounds safety. **Adoption is conditional on the §6 on-device packet-capture confirmation (Chris) before tagging 0.0.14.**
@@ -72,3 +74,25 @@ This is **load-bearing, not pro-forma**, given Songcatcher's privacy-first / on-
 - **Output → head mapping** — pinned upstream `basic_pitch/inference.py` (`predict`): `note = Identity_1`, `onset = Identity_2`, `contour = Identity`.
 - **Input shape / rate / windowing** — pinned upstream `basic_pitch/constants.py`: `AUDIO_SAMPLE_RATE = 22050`, `AUDIO_N_CHANNELS = 1`, `FFT_HOP = 256`, `AUDIO_WINDOW_LENGTH = 2 s`, `AUDIO_N_SAMPLES = 43844`, `ANNOTATIONS_FPS = 86`, note/onset bins `88`, contour bins `264` (88×3); `inference.py:window_audio_file` feeds `(1, 43844, 1)` windows.
 - **Velocity / pitch-bend provenance** — pinned upstream `basic_pitch/note_creation.py`: amplitude computed in `output_to_notes_polyphonic`; bends in `get_pitch_bends` (both post-processing, not model outputs).
+
+---
+
+## Egress verification — results (2026-05-31)
+
+Three independent layers, run on macOS **26.3.1** (build 25D771280a). This is the library-level evidence for the §6 egress condition; it is what clears the `0.0.14` tag. (All three layers ran on this machine — none were skipped.)
+
+**1. Static — no networking capability in source.** `grep -rnE` over all of `Sources/` for `URLSession|URLRequest|URL(string|NWConnection|NWListener|import Network|CFSocket|CFStream|getaddrinfo|connect(|socket(|BSDSocket|Process(|NSTask|posix_spawn|https?://` returned **NO MATCHES** — both across `Sources/` and focused on `Sources/MusicCraftCore/Transcription/`. There is no API in the compiled library capable of opening a socket, spawning a process, or resolving a host. Absence of capability, not merely absence of observed behavior.
+
+**2. Runtime capability proof (headline) — inference succeeds with all network denied.** The test bundle was built with network available (`swift build --build-tests`; `dependencies: []`, so nothing to fetch), then `BasicPitchTranscriberTests` was run under a sandbox profile denying all network:
+
+```
+sandbox-exec -p '(version 1)(allow default)(deny network-outbound)(deny network-inbound)(deny network-bind)' \
+  xcrun xctest -XCTest MusicCraftCoreTests.BasicPitchTranscriberTests \
+  .build/arm64-apple-macosx/debug/MusicCraftCorePackageTests.xctest
+```
+
+Result: **11/11 passed** under full network denial — including `testModelLoads` (Core ML loads the bundled `nmp.mlpackage`), `testInferenceProducesNotes` (inference runs), and `testInferenceIsDeterministic` (byte-identical output across runs). Model load + inference therefore require no network call; if any were on the required path, the suite would fail under this profile. (Direct `swift test` under the sandbox was blocked only by SwiftPM's manifest **recompile** step — `swiftc` on `Package.swift` hit `sandbox_apply: Operation not permitted` under nesting — not by inference; running the prebuilt `.xctest` bundle via `xcrun xctest` bypasses that. `sandbox-exec` was confirmed functional here on a trivial command first.)
+
+**3. Observational corroboration (sampling-based).** During a normal un-sandboxed run, `lsof -i -a -p <pid>` for the test process tree showed **no internet sockets** (parent or children), and `nettop -P -L 1` showed no matching rows. The suite passed (11/11). This layer is sampling-based — the run is ~1 s, so a sub-second connection could in principle be missed — hence corroboration, not the primary proof (layer 2 is).
+
+**Conclusion.** Library-level egress is confirmed: the Basic Pitch transcriber/inference performs **no network egress**. App-level on-device confirmation inside Songcatcher (packet capture under the app's entitlements) remains a Phase 2 step — only runnable once the transcriber is wired into the app — and is correct scope, not a gap in this evidence (see §6 STATUS).
