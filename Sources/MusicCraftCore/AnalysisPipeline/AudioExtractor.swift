@@ -39,6 +39,18 @@ public enum AudioExtractor {
         configuration: Configuration = .default
     ) -> Result {
         let duration = TimeInterval(buffer.count) / sampleRate
+
+        // Near-silence guard. The Basic Pitch model emits a handful of phantom notes (and therefore a
+        // spurious key/chord) on essentially-silent input — an all-zero buffer decoded to ~16 notes + a
+        // key. If the buffer carries no meaningful signal, return an empty Result before running the
+        // model. The floor is a peak amplitude of `silenceFloorPeak` (~-60 dBFS): orders of magnitude
+        // below a real quiet nylon take (device captures peak ~0.30–0.52 on the device-test recordings),
+        // so it only catches digital / near silence and never suppresses real fingerpicking.
+        let peak = buffer.lazy.map { Swift.abs($0) }.max() ?? 0
+        guard peak >= silenceFloorPeak else {
+            return Result(chordSegments: [], key: nil, contour: [], detectedNotes: [], duration: duration)
+        }
+
         guard let transcriber = sharedBasicPitchTranscriber,
               let transcription = try? transcriber.transcribe(buffer, sampleRate: sampleRate) else {
             // Model unavailable (or buffer empty) → never crash; emit a well-formed empty Result.
@@ -63,6 +75,11 @@ public enum AudioExtractor {
     }
 
     // MARK: - Basic Pitch note source
+
+    /// Peak-amplitude floor (~-60 dBFS) below which `extract` treats the buffer as silence and returns
+    /// an empty Result without running the model. Far below any real capture (the device-test nylon
+    /// recordings peak at ~0.30–0.52), so it only catches digital / near silence.
+    private static let silenceFloorPeak: Float = 1e-3
 
     /// Process-wide cached Basic Pitch transcriber. A Swift `static let` is initialized exactly once
     /// (lazily, thread-safe), so the bundled Core ML model is compiled + loaded a single time and

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — near-silence guard: digital silence no longer yields phantom chords/key
+- **`AudioExtractor.extract` returns an empty `Result` when the input buffer is essentially silent** (peak amplitude below ~-60 dBFS), short-circuiting before the Basic Pitch model runs. The model decoded an all-zero buffer to ~16 phantom notes + a spurious key; the guard prevents that. The peak floor (`1e-3`) is orders of magnitude below a real quiet nylon capture (the device-test recordings peak at 0.30–0.52, rms ~0.057–0.066), so genuine quiet fingerpicking is never suppressed — verified that testspanish/test/testandy analyze identically with and without the guard. New test `testSilentBufferProducesEmptyResult`. Bench unchanged (GADA 100/93.8, TaylorNylon 99.1/92.7). No public API change.
+
 ## [0.1.0] - 2026-06-01
 
 ### Removed — the hand-rolled DSP chord/key path; Basic Pitch + note-native is the only audio engine

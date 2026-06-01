@@ -122,25 +122,20 @@ final class AudioExtractorTests: XCTestCase {
         XCTAssertEqual(result.chordSegments.count, 0)
     }
 
-    func testSilentBufferIsWellFormed() {
-        // KNOWN LIMITATION (0.1.0): the Basic Pitch path does not gate pure-digital-silence input.
-        // An all-zero buffer is pathological NN input and can yield a few spurious low-confidence notes
-        // (and therefore a key); the removed DSP path gated this via an energy/onset threshold. Real
-        // captures carry a noise floor. Tracked in TASKS for a possible energy guard (needs device
-        // validation against quiet nylon captures). Here we only assert the output is WELL-FORMED.
+    func testSilentBufferProducesEmptyResult() {
+        // The near-silence guard: an all-zero (digital-silence) buffer is below the peak floor, so
+        // extract returns an empty Result without running the model — no phantom notes/chords/key.
+        // (Before the guard, Basic Pitch decoded an all-zero buffer to ~16 spurious notes + a key.)
+        // The floor is ~-60 dBFS, orders of magnitude below real quiet nylon (peak ~0.30–0.52), so
+        // this does not suppress genuine captures — see RealAudioChordTests / the scratch device check.
         let silence = generateSilence(duration: 2.0, sampleRate: 44100)
         let result = AudioExtractor.extract(buffer: silence, sampleRate: 44100)
 
+        XCTAssertEqual(result.chordSegments.count, 0)
+        XCTAssertEqual(result.detectedNotes.count, 0)
+        XCTAssertEqual(result.contour.count, 0)
+        XCTAssertNil(result.key)
         XCTAssertEqual(result.duration, 2.0, accuracy: 0.001)
-        for segment in result.chordSegments {
-            XCTAssertLessThanOrEqual(segment.startTime, segment.endTime)
-        }
-        for note in result.detectedNotes {
-            XCTAssertGreaterThanOrEqual(note.midiNote, 0)
-            XCTAssertLessThanOrEqual(note.midiNote, 127)
-            XCTAssertGreaterThan(note.confidence, 0.0)
-            XCTAssertLessThanOrEqual(note.confidence, 1.0)
-        }
     }
 
     // MARK: - Single Chord Segment
