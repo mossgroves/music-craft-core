@@ -1,14 +1,19 @@
 import Foundation
 import Speech
+import AVFAudio
+import CoreMedia
 
 /// On-device lyric transcription wrapper around Apple's Speech framework.
 /// Produces timestamped word-level tokens for alignment with chord and melody timelines.
 ///
-/// Uses SFSpeechRecognizer (iOS 17+ baseline). iOS 26+ can optionally configure
-/// SpeechAnalyzer behavior via Configuration (forward-compatible; 0.0.10 will implement iOS 26 path).
+/// iOS 26+ uses the modern **SpeechAnalyzer / SpeechTranscriber** path (per-word timing from the
+/// time-indexed result attributes, optional per-token confidence, on-device model asset installed on
+/// demand). iOS 17–25 — and any iOS 26 failure (model asset unavailable, transcription throws) — use
+/// **SFSpeechRecognizer**, which remains the fallback floor. Uses system-managed language models; no
+/// model bundling or management by MCC. `transcribe(...)`'s signature is unchanged across both paths.
 public enum LyricsExtractor {
     /// Transcribe speech from an audio buffer, producing timestamped word-level tokens.
-    /// Async; wraps Apple's Speech framework (SFSpeechRecognizer or SpeechAnalyzer).
+    /// Async; wraps Apple's Speech framework (SpeechAnalyzer on iOS 26+, else SFSpeechRecognizer).
     /// Uses system-managed language models; no model bundling or management by MCC.
     ///
     /// - Parameters:
@@ -24,7 +29,39 @@ public enum LyricsExtractor {
         locale: String? = nil,
         configuration: Configuration? = nil
     ) async throws -> [TranscribedToken] {
-        let recognizer = SFSpeechRecognizer(locale: Locale(identifier: locale ?? Locale.current.language.languageCode?.identifier ?? "en-US"))
+        let localeIdentifier = locale ?? Locale.current.language.languageCode?.identifier ?? "en-US"
+
+        // iOS 26+: try the modern SpeechAnalyzer path; on any failure (model asset can't be installed,
+        // transcription throws) fall back to SFSpeechRecognizer. iOS 17–25: SFSpeechRecognizer directly.
+        if #available(iOS 26, macOS 26, *) {
+            do {
+                return try await transcribeWithSpeechAnalyzer(
+                    buffer: buffer,
+                    sampleRate: sampleRate,
+                    locale: Locale(identifier: localeIdentifier),
+                    configuration: configuration ?? .default
+                )
+            } catch {
+                return try await transcribeViaSFSpeechRecognizer(
+                    buffer: buffer, sampleRate: sampleRate, localeIdentifier: localeIdentifier, configuration: configuration
+                )
+            }
+        } else {
+            return try await transcribeViaSFSpeechRecognizer(
+                buffer: buffer, sampleRate: sampleRate, localeIdentifier: localeIdentifier, configuration: configuration
+            )
+        }
+    }
+
+    /// SFSpeechRecognizer path (iOS 17+ baseline, and the iOS 26 fallback floor). Builds the recognizer
+    /// and checks availability, then runs the recognition below — the recognition itself is unchanged.
+    private static func transcribeViaSFSpeechRecognizer(
+        buffer: [Float],
+        sampleRate: Double,
+        localeIdentifier: String,
+        configuration: Configuration?
+    ) async throws -> [TranscribedToken] {
+        let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier))
 
         guard let recognizer else {
             throw SpeechFrameworkError.frameworkUnavailable
@@ -100,6 +137,132 @@ public enum LyricsExtractor {
                 continuation.resume(returning: tokens)
             }
         }
+    }
+
+    // MARK: - iOS 26 SpeechAnalyzer path
+
+    /// iOS 26+ path: Apple's `SpeechAnalyzer` + `SpeechTranscriber`. Emits per-word tokens whose
+    /// onset/duration come from the time-indexed result attribute (`audioTimeRange`, a `CMTimeRange`),
+    /// with optional per-token confidence (`transcriptionConfidence`, a `Double`) when
+    /// `configuration.includeConfidence`. The on-device model asset is installed on demand; if it can't
+    /// be made available the method throws so the caller falls back to SFSpeechRecognizer.
+    ///
+    /// `configuration.waitForFinalResult` is honored as final-only collection (`reportingOptions` omits
+    /// `.volatileResults`) — a complete pre-recorded buffer has no meaningful partial hypotheses.
+    @available(iOS 26, macOS 26, *)
+    private static func transcribeWithSpeechAnalyzer(
+        buffer: [Float],
+        sampleRate: Double,
+        locale: Locale,
+        configuration: Configuration
+    ) async throws -> [TranscribedToken] {
+        // Resolve a transcriber-supported locale (BCP 47 equivalence).
+        guard let resolvedLocale = await SpeechTranscriber.supportedLocale(equivalentTo: locale) else {
+            throw SpeechFrameworkError.localeUnsupported(locale.identifier)
+        }
+
+        // Final results only; per-word timing always; confidence when requested.
+        var attributeOptions: Set<SpeechTranscriber.ResultAttributeOption> = [.audioTimeRange]
+        if configuration.includeConfidence { attributeOptions.insert(.transcriptionConfidence) }
+        let transcriber = SpeechTranscriber(
+            locale: resolvedLocale,
+            transcriptionOptions: [],
+            reportingOptions: [],
+            attributeOptions: attributeOptions
+        )
+
+        // Install the on-device language model for this transcriber if it isn't already present.
+        // A nil request means nothing needs installing; a thrown install error falls back to SF.
+        if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+            try await request.downloadAndInstall()
+        }
+
+        // The audio format the transcriber wants; convert our mono Float32 buffer into it.
+        guard let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
+            throw SpeechFrameworkError.frameworkUnavailable
+        }
+        let inputs = try makeAnalyzerInputs(buffer: buffer, sampleRate: sampleRate, targetFormat: analyzerFormat)
+
+        // Stream the audio through the analyzer; collect word tokens from the transcriber's results.
+        let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
+        let analyzer = SpeechAnalyzer(modules: [transcriber])
+
+        let includeConfidence = configuration.includeConfidence
+        let collector = Task { () throws -> [TranscribedToken] in
+            var tokens: [TranscribedToken] = []
+            for try await result in transcriber.results {
+                let attributed = result.text
+                for run in attributed.runs {
+                    guard let timeRange = run[AttributeScopes.SpeechAttributes.TimeRangeAttribute.self] else { continue }
+                    let word = String(attributed[run.range].characters).trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !word.isEmpty else { continue }
+                    let confidence: Double? = includeConfidence
+                        ? run[AttributeScopes.SpeechAttributes.ConfidenceAttribute.self]
+                        : nil
+                    tokens.append(TranscribedToken(
+                        text: word,
+                        onsetTime: timeRange.start.seconds,
+                        duration: timeRange.duration.seconds,
+                        confidence: confidence
+                    ))
+                }
+            }
+            return tokens
+        }
+
+        try await analyzer.start(inputSequence: stream)
+        for input in inputs { continuation.yield(input) }
+        continuation.finish()
+        try await analyzer.finalizeAndFinishThroughEndOfInput()
+        return try await collector.value
+    }
+
+    /// Convert the mono Float32 `[Float]` buffer at `sampleRate` into the transcriber's required format,
+    /// wrapped as `AnalyzerInput`(s). No conversion when the formats already match.
+    @available(iOS 26, macOS 26, *)
+    private static func makeAnalyzerInputs(
+        buffer: [Float],
+        sampleRate: Double,
+        targetFormat: AVAudioFormat
+    ) throws -> [AnalyzerInput] {
+        guard let sourceFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false),
+              let sourceBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: AVAudioFrameCount(max(1, buffer.count))) else {
+            throw SpeechFrameworkError.frameworkUnavailable
+        }
+        sourceBuffer.frameLength = AVAudioFrameCount(buffer.count)
+        buffer.withUnsafeBufferPointer { ptr in
+            if let base = ptr.baseAddress, let dst = sourceBuffer.floatChannelData?[0] {
+                dst.update(from: base, count: buffer.count)
+            }
+        }
+
+        if sourceFormat == targetFormat {
+            return [AnalyzerInput(buffer: sourceBuffer)]
+        }
+
+        guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
+            throw SpeechFrameworkError.frameworkUnavailable
+        }
+        let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
+        let capacity = AVAudioFrameCount(Double(buffer.count) * ratio) + 4096
+        guard let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: max(1, capacity)) else {
+            throw SpeechFrameworkError.frameworkUnavailable
+        }
+        var providedInput = false
+        var conversionError: NSError?
+        converter.convert(to: outBuffer, error: &conversionError) { _, inputStatus in
+            if providedInput {
+                inputStatus.pointee = .endOfStream
+                return nil
+            }
+            providedInput = true
+            inputStatus.pointee = .haveData
+            return sourceBuffer
+        }
+        if let conversionError {
+            throw SpeechFrameworkError.recognitionFailed(conversionError.localizedDescription)
+        }
+        return [AnalyzerInput(buffer: outBuffer)]
     }
 
     /// Configuration for iOS 26+ SpeechAnalyzer. Ignored on iOS 17 SFSpeechRecognizer (forward-compatible).
