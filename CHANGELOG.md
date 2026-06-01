@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Basic Pitch adoption, Phase 1 (transcriber + bundled model; additive, no wiring)
+- **`BasicPitchTranscriber`** (new `Sources/MusicCraftCore/Transcription/` area) — wraps Spotify's bundled **Basic Pitch** Core ML model (audio → polyphonic note events + frame-level pitch contour). `transcribe(_:sampleRate:)` resamples a mono buffer to the model's 22050 Hz rate (vDSP), runs inference, and decodes the model's note/onset/contour activations into `[TranscribedNote]` + `[PitchFrame]` + `duration`. Public types: `BasicPitchTranscriber` (`Configuration`, `Transcription`, `TranscriptionError`), `TranscribedNote`, `PitchFrame`.
+- **Bundled model resource** `Sources/MusicCraftCore/Resources/nmp.mlpackage` — Spotify's official Core ML serialization, used as-is (Apache-2.0). Declared `.copy` (preserves the `.mlpackage` directory; `.process` flattens it). `Package.swift` stays `dependencies: []` — Core ML is a system framework, zero new third-party deps. License at `BASIC_PITCH_LICENSE.txt`; attribution + SHA-256 in `NOTICE`.
+- **`BasicPitchDecoder`** — faithful Swift re-implementation of Basic Pitch's note-decoding algorithm (`output_to_notes_polyphonic`, `get_infered_onsets`, `argrelmax` peak-pick, the melodia trick); pure numeric, no upstream Python vendored. Velocity = mean note activation (ported); pitch-bend deferred in Phase 1 (`pitchBend == nil`).
+- **Security analysis filed** at `docs/security/basic-pitch-2026-05-31.md` (the gating third-party-integration review): provenance + SHA-256, "serialized NN, no exec path", bounds-safe resampler, throw-based error design, and the **on-device packet-capture step (Chris)** that gates the tag. Classified **SAFE TO ADOPT**.
+- **No wiring.** `AudioExtractor`, `PitchDetector`, `OnsetDetector`, and all `Result` types are untouched. Fully reversible (delete the type + the resource).
+
+#### Verified against upstream (before freezing the API)
+- Artifact + I/O confirmed against `spotify/basic-pitch` @ `fa5997af` (release v0.4.0): input `input_2` `(1, 43844, 1)` mono @ 22050 Hz; outputs `Identity`→contour (264), `Identity_1`→note (88), `Identity_2`→onset (88). Velocity/pitch-bend are Python post-processing, not model outputs.
+
+#### Tests
+- `BasicPitchTranscriberTests` — resampler (bounds/behavior) and the note decoder pass on the CLI; the model-dependent tests (load, inference produces notes, **determinism: byte-identical output across runs**, empty-buffer) **also ran and passed under `swift test`** on macOS (Core ML loads the bundled model at runtime). 11/11 pass.
+
+#### Not done in this commit (gating the `0.0.14` tag)
+- **No version bump** (`musicCraftCoreVersion` stays `0.0.13`), **no version header here**, **no tag, not pushed.** The `0.0.14` tag waits on (1) this security analysis (filed) and (2) Chris's on-device validation: packet-capture confirmation of zero network egress at inference + a real nylon-recording sanity check. See `specs/0.0.14-basic-pitch-adoption.md`.
+
 ## [0.0.13] - 2026-05-30
 
 ### Changed

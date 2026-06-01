@@ -1,0 +1,31 @@
+MusicCraftCore — third-party attributions
+==========================================
+
+This product bundles third-party material. Attributions follow.
+
+------------------------------------------------------------------------
+Basic Pitch (Spotify) — bundled Core ML model, used as-is
+------------------------------------------------------------------------
+
+Component:   Basic Pitch — A Lightweight Audio-to-MIDI Converter (ICASSP 2022
+             "nmp" model), Spotify AB.
+Source:      https://github.com/spotify/basic-pitch
+Commit:      fa5997af0a8210982619003269994a1be25eddf3  (release v0.4.0, 2025-11-13)
+License:     Apache License 2.0 — Copyright 2022 Spotify AB.
+             Full text: BASIC_PITCH_LICENSE.txt (repo root)
+Use:         The official Core ML serialization is bundled UNCHANGED (used as-is) at
+             Sources/MusicCraftCore/Resources/nmp.mlpackage. No modification or
+             re-conversion was performed.
+
+Bundled artifact (nmp.mlpackage) — SHA-256:
+  Data/com.apple.CoreML/model.mlmodel
+    af7bf7d49bc167e0bf0c30aa2ca6b432c3e10df048d2dd4173ff3a738c020858
+  Data/com.apple.CoreML/weights/weight.bin
+    691a6b63c7ddcdde0ee131ff3986dcb1250df47cd738612efde966ba9b4c99cd
+  Manifest.json
+    c1fa5ef8acc34703edcd4e90e9a8640bd4673d9f3a68753c3b9d1ca0365e2928
+
+Derived work: MusicCraftCore's Swift `BasicPitchTranscriber` re-implements Basic
+Pitch's note-decoding algorithm (output_to_notes_polyphonic, get_infered_onsets,
+constrain_frequency, model_frames_to_time) and a resampler in Swift. No upstream
+Python is vendored or executed. See docs/security/basic-pitch-2026-05-31.md.
