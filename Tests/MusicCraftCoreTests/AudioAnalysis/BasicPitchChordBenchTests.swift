@@ -54,20 +54,20 @@ final class BasicPitchVsCurrentChordBench: XCTestCase {
         let namer = ChordDetector(sampleRate: 44100, bufferSize: 8192,
                                   chromaTemplateLibrary: CanonicalChromaLibrary())
 
-        print("\n===== Basic-Pitch-notes→chords  vs  current chord path (diagnostic) =====")
+        print("\n===== Chord namer head-to-head (diagnostic): current vs BP-chroma vs BP-note-native =====")
 
         if let gada {
             let files = gadaFiles(in: gada)
-            let (cur, bp) = run(files: files, transcriber: transcriber, namer: namer)
-            printSummary(subset: "GADA", current: cur, basicPitch: bp)
+            let (cur, bpC, bpN) = run(files: files, transcriber: transcriber, namer: namer)
+            printSummary(subset: "GADA", current: cur, bpChroma: bpC, bpNative: bpN)
         } else {
             print("GADA: fixtures not available (skipped)")
         }
 
         if let taylor {
             let files = taylorFiles(in: taylor)
-            let (cur, bp) = run(files: files, transcriber: transcriber, namer: namer)
-            printSummary(subset: "TaylorNylon", current: cur, basicPitch: bp)
+            let (cur, bpC, bpN) = run(files: files, transcriber: transcriber, namer: namer)
+            printSummary(subset: "TaylorNylon", current: cur, bpChroma: bpC, bpNative: bpN)
         } else {
             print("TaylorNylon: fixtures not available (skipped)")
         }
@@ -76,58 +76,70 @@ final class BasicPitchVsCurrentChordBench: XCTestCase {
         // Intentionally no XCTAssert — this is a comparison, not a gate.
     }
 
-    // MARK: - Per-file dual evaluation
+    // MARK: - Per-file three-way evaluation
 
-    /// Score both paths on the identical file set. Returns (current, basicPitch) tallies.
+    /// Score all three paths on the identical file set. Returns (current, bp-chroma, bp-note-native).
     private func run(files: [(url: URL, truth: String)],
                      transcriber: BasicPitchTranscriber,
-                     namer: ChordDetector) -> (Tally, Tally) {
+                     namer: ChordDetector) -> (Tally, Tally, Tally) {
         var current = Tally()
-        var basicPitch = Tally()
+        var bpChroma = Tally()
+        var bpNative = Tally()
 
         for (url, truth) in files {
+            // Parse the label through Chord(parsing:) so the comparison is canonical (pitch-class
+            // root + quality enum) — enharmonic spelling can't cause a false miss.
+            guard let truthChord = Chord(parsing: truth) else { continue }
             guard let (samples, sampleRate) = loadMono(url) else { continue }
             current.total += 1
-            basicPitch.total += 1
+            bpChroma.total += 1
+            bpNative.total += 1
 
-            // (1) Current path — exactly what RealAudioChordTests scores.
+            // (1) Current path — exactly what RealAudioChordTests runs.
             let result = AudioExtractor.extract(buffer: samples, sampleRate: sampleRate)
-            if let seg = result.chordSegments.first {
-                score(root: seg.chord.root.displayName, exact: seg.chord.displayName, truth: truth, into: &current)
-            } else {
-                current.noChord += 1
-            }
+            score(result.chordSegments.first?.chord, truth: truthChord, into: &current)
 
-            // (2) Basic Pitch route — notes → whole-clip chroma → same namer.
+            // (2) + (3) share one transcription.
             if let transcription = try? transcriber.transcribe(samples, sampleRate: sampleRate) {
-                let ch = chroma(from: transcription.notes)
-                if let bpResult = namer.detectChord(chroma: ch) {
-                    score(root: bpResult.chord.root.displayName, exact: bpResult.chord.displayName, truth: truth, into: &basicPitch)
-                } else {
-                    basicPitch.noChord += 1
-                }
+                // (2) Basic Pitch → whole-clip chroma → ChordDetector namer.
+                score(namer.detectChord(chroma: chroma(from: transcription.notes))?.chord,
+                      truth: truthChord, into: &bpChroma)
+                // (3) Basic Pitch → weighted pitch-class histogram + bass → NoteChordIdentifier.
+                let (hist, bass) = weighted(from: transcription.notes)
+                score(NoteChordIdentifier.identify(weightedPitchClasses: hist, bassPitchClass: bass)?.chord,
+                      truth: truthChord, into: &bpNative)
             } else {
-                basicPitch.noChord += 1
+                bpChroma.noChord += 1
+                bpNative.noChord += 1
             }
         }
-        return (current, basicPitch)
+        return (current, bpChroma, bpNative)
     }
 
-    /// Mirror RealAudioChordTests's comparison exactly: root credit only when the root-only
-    /// displayName equals the (quality-bearing) label; otherwise exact credit if the full chord
-    /// matches; otherwise a confusion entry.
-    private func score(root detectedRoot: String, exact detectedExact: String, truth: String, into t: inout Tally) {
-        if detectedRoot == truth {
-            t.root += 1
-            t.exact += 1
-        } else if detectedExact == truth {
+    /// Corrected metric (both sides canonical `Chord`): root = pitch-class root match (any quality);
+    /// exact = root AND quality match. A detected chord that misses is recorded as a confusion.
+    private func score(_ detected: Chord?, truth: Chord, into t: inout Tally) {
+        guard let detected else { t.noChord += 1; return }
+        if detected.root == truth.root { t.root += 1 }
+        if detected.root == truth.root && detected.quality == truth.quality {
             t.exact += 1
         } else {
-            t.confusions["\(truth)→\(detectedRoot)", default: 0] += 1
+            t.confusions["\(truth.displayName)→\(detected.displayName)", default: 0] += 1
         }
     }
 
-    // MARK: - notes → chroma
+    // MARK: - notes → chroma / histogram
+
+    /// Un-normalized Σ duration×velocity per pitch class, plus the pitch class of the lowest-MIDI
+    /// note as bass. `NoteChordIdentifier` normalizes internally (presence floor is relative to the
+    /// max bin), so the absolute scale here doesn't matter.
+    private func weighted(from notes: [TranscribedNote]) -> (hist: [Double], bass: Int?) {
+        var bins = [Double](repeating: 0, count: 12)
+        for n in notes { bins[((n.pitchMIDI % 12) + 12) % 12] += max(0, n.duration) * max(0, n.velocity) }
+        let bass = notes.min(by: { $0.pitchMIDI < $1.pitchMIDI }).map { (($0.pitchMIDI % 12) + 12) % 12 }
+        return (bins, bass)
+    }
+
 
     /// 12-element pitch-class histogram: each note adds `duration × velocity` to bin
     /// `pitchMIDI % 12`. Normalized so the max bin ≈ 1.0 (same order as the namer's templates,
@@ -145,8 +157,11 @@ final class BasicPitchVsCurrentChordBench: XCTestCase {
 
     // MARK: - Reporting
 
-    private func printSummary(subset: String, current: Tally, basicPitch: Tally) {
+    private func printSummary(subset: String, current: Tally, bpChroma: Tally, bpNative: Tally) {
         func pct(_ n: Int, _ d: Int) -> String { d == 0 ? "n/a" : String(format: "%.1f%%", Double(n) / Double(d) * 100) }
+        func line(_ label: String, _ t: Tally) -> String {
+            "  \(label): root \(t.root)/\(t.total) = \(pct(t.root, t.total)), exact \(t.exact)/\(t.total) = \(pct(t.exact, t.total))  [noChord \(t.noChord)]"
+        }
         func topConfusions(_ t: Tally) -> String {
             let top = t.confusions.sorted { $0.value > $1.value }.prefix(5).map { "\($0.key)×\($0.value)" }
             return top.isEmpty ? "(none)" : top.joined(separator: ", ")
@@ -154,10 +169,13 @@ final class BasicPitchVsCurrentChordBench: XCTestCase {
         print("""
 
         --- \(subset) (\(current.total) files) ---
-          current     : root \(current.root)/\(current.total) = \(pct(current.root, current.total)), exact \(current.exact)/\(current.total) = \(pct(current.exact, current.total))  [noChord \(current.noChord)]
-          basicPitch  : root \(basicPitch.root)/\(basicPitch.total) = \(pct(basicPitch.root, basicPitch.total)), exact \(basicPitch.exact)/\(basicPitch.total) = \(pct(basicPitch.exact, basicPitch.total))  [noChord \(basicPitch.noChord)]
-          current    confusions: \(topConfusions(current))
-          basicPitch confusions: \(topConfusions(basicPitch))
+        \(line("current       ", current))
+        \(line("bp-chroma     ", bpChroma))
+        \(line("bp-note-native", bpNative))
+          bar to beat   : trained CreateML model projection ≈ 85–92% root on solo nylon
+          current        confusions: \(topConfusions(current))
+          bp-chroma      confusions: \(topConfusions(bpChroma))
+          bp-note-native confusions: \(topConfusions(bpNative))
         """)
     }
 
