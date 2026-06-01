@@ -117,9 +117,19 @@ public enum AudioExtractor {
         }
         let notes = transcription.notes
         let chordSegments = noteNativeChordSegments(notes: notes, duration: duration)   // FULL polyphony → note-native (the validated win)
-        let detectedNotes = skyline(of: notes)                                          // monophonic melodic reduction
-        let contour = deriveContour(from: detectedNotes)                                // REUSE existing contour
-        let key = inferKey(from: chordSegments, fallbackNotes: detectedNotes)           // REUSE existing key inference (chord-based first)
+        // detectedNotes = FULL polyphony. Sanctuary's melody-key inference AND its harmony timeline
+        // both consume Result.detectedNotes; the skyline melodic reduction misread the key on
+        // instrument input (a D–A take read C♯ minor instead of D/A major), because a single melodic
+        // line drops the harmonic content the key/harmony stages need. Full polyphony fixes both with
+        // no Sanctuary change. The contour stays a single melodic line via a locally-computed skyline.
+        let detectedNotes = notes.map {
+            DetectedNote(midiNote: $0.pitchMIDI,
+                         onsetTime: $0.onsetTime,
+                         duration: max(0.001, $0.duration),
+                         confidence: min(1, max(0.1, $0.velocity)))
+        }
+        let contour = deriveContour(from: skyline(of: notes))                           // contour = melodic skyline (single line)
+        let key = inferKey(from: chordSegments, fallbackNotes: detectedNotes)           // chord-based first, full-poly fallback
         return Result(chordSegments: chordSegments, key: key, contour: contour, detectedNotes: detectedNotes, duration: duration)
     }
 
