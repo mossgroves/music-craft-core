@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-06-01
+
+### Added — iOS 26 SpeechAnalyzer transcription path in LyricsExtractor (SFSpeechRecognizer fallback)
+- **`LyricsExtractor.transcribe` now routes by OS.** On **iOS 26+** it uses Apple's modern `SpeechAnalyzer` + `SpeechTranscriber`: per-word tokens whose onset/duration come from the time-indexed `audioTimeRange` (`CMTimeRange`) attribute, with optional per-token confidence (`transcriptionConfidence`, `Double`) when `Configuration.includeConfidence`. The on-device language-model asset is installed on demand (`AssetInventory.assetInstallationRequest(supporting:).downloadAndInstall()`); the mono Float32 buffer is converted to `SpeechAnalyzer.bestAvailableAudioFormat` and streamed as `AnalyzerInput`. On **iOS 17–25**, and on **any iOS 26 failure** (model asset unavailable, unsupported locale, transcription error), it falls back to the existing **`SFSpeechRecognizer`** path — kept intact as the floor. `transcribe(...)`'s signature is unchanged; `Configuration` (`waitForFinalResult`, `includeConfidence`) is now honored on the iOS 26 path (it was forward-compatible/ignored before). **Device-validated** (near-verbatim on a sung + guitar take; handled the mix well). Internal Voice change only — no public API signature change. `musicCraftCoreVersion` → "0.1.2".
+
 ## [0.1.1] - 2026-06-01
 
 ### Release — silence guard + note-native chord-segment cleanup (device-validated)
