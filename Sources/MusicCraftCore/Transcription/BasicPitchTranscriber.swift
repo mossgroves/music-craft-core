@@ -269,17 +269,17 @@ public struct BasicPitchTranscriber {
     // MARK: - Core ML runtime compilation
 
     private static func compile(_ url: URL) throws -> URL {
-        let sem = DispatchSemaphore(value: 0)
-        var outcome: Result<URL, Error>?
-        MLModel.compileModel(at: url) { result in
-            outcome = result
-            sem.signal()
-        }
-        sem.wait()
-        switch outcome {
-        case .success(let compiled): return compiled
-        case .failure(let e): throw TranscriptionError.modelLoadFailed("compile: \(e)")
-        case .none: throw TranscriptionError.modelLoadFailed("compile: no result")
+        // Synchronous compile. `init` is a synchronous throwing initializer that can be reached from
+        // a Swift Concurrency context (e.g. `AudioExtractor.extract` inside a `Task`); the previous
+        // implementation bridged the async `compileModel(at:completionHandler:)` with a
+        // `DispatchSemaphore.wait()`, which blocks a cooperative-pool thread and trips the
+        // `unsafeForcedSync` structural-concurrency hazard. The synchronous `compileModel(at:)` does
+        // no dispatch wait, so the hazard is gone at its source. (Only the `.mlpackage` fallback path
+        // compiles at runtime — app/device builds ship the precompiled `.mlmodelc` and skip this.)
+        do {
+            return try MLModel.compileModel(at: url)
+        } catch {
+            throw TranscriptionError.modelLoadFailed("compile: \(error)")
         }
     }
 
