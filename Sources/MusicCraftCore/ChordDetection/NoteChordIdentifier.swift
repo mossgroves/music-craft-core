@@ -23,6 +23,27 @@ public enum NoteChordIdentifier {
     private static let complexityPenalty = 0.01   // × interval count — breaks near-ties toward fewer tones
     private static let bassBonus = 0.1            // when the candidate root == the bass pitch class
 
+    /// Per-quality prior (subtracted from the score). Plain major/minor are the overwhelmingly common
+    /// shapes in this repertoire; augmented, suspended, and 7th names were over-fired on real guitar
+    /// (on-device reads showed spurious `C+`, `G♯+`, `Esus2`, `Bsus4`, `Gmaj7`) when their distinguishing
+    /// tone — the ♯5, the sus 2nd/4th, the added 7th — was only weakly present (a passing tone, an
+    /// overtone, or a Basic Pitch near-miss). A prior makes a colored name win only when its color tone
+    /// carries enough weight to overcome it; with a full-strength color tone the colored chord still
+    /// wins by a wide margin (the synthetic unit tests). Augmented is penalized hardest — it is rare in
+    /// folk/singer-songwriter guitar and was the worst offender. Tuned against the labeled bench
+    /// (GADA / TaylorNylon) so genuine colored chords there are unaffected.
+    private static func qualityPrior(_ q: ChordQuality) -> Double {
+        switch q {
+        case .major, .minor:       return 0.0
+        case .sus2, .sus4:         return 0.12
+        case .dominant7, .minor7:  return 0.10
+        case .major7:              return 0.12
+        case .diminished:          return 0.08
+        case .augmented:           return 0.20
+        default:                   return 0.10
+        }
+    }
+
     /// Name a chord from a 12-element weighted pitch-class histogram and an optional bass pitch
     /// class. `weightedPitchClasses[pc]` is the summed salience of that pitch class (e.g.
     /// Σ duration×velocity). Returns nil if there is no usable harmonic content.
@@ -66,6 +87,7 @@ public enum NoteChordIdentifier {
                 score -= missingPenalty * Double(missing)   // don't reward chords whose tones aren't sounding
                 score -= extraPenalty * extraRatio          // penalize weight that doesn't belong to the chord
                 score -= complexityPenalty * Double(quality.intervals.count) // prefer fewer tones on near-ties
+                score -= qualityPrior(quality)              // bias against rare/colored names; favors plain triads on near-ties
                 if rootIsBass { score += bassBonus }        // bass is a root tiebreaker/bonus only
 
                 if best == nil || score > best!.score {
