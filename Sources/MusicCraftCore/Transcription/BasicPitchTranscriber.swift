@@ -64,14 +64,28 @@ public struct BasicPitchTranscriber {
     /// so we do not rely on a precompiled resource.
     public init(configuration: Configuration = .default) throws {
         self.configuration = configuration
-        guard let url = Bundle.module.url(forResource: "nmp", withExtension: "mlpackage") else {
+        // Resolve the bundled model across both build pipelines. An Xcode app build runs `coremlc`
+        // on the `.mlpackage` resource and ships the COMPILED `nmp.mlmodelc`; `swift build`/tests do
+        // not run `coremlc` and ship the uncompiled `nmp.mlpackage`. Look for the compiled form first
+        // (load it directly — no runtime compile), then fall back to compiling the `.mlpackage` at
+        // runtime. Looking only for `.mlpackage` (the prior bug) returns nil inside an app → the model
+        // never loads and the `.basicPitch` path silently yields zero notes.
+        let compiledURL: URL
+        if let mlmodelc = Bundle.module.url(forResource: "nmp", withExtension: "mlmodelc") {
+            compiledURL = mlmodelc
+        } else if let mlpackage = Bundle.module.url(forResource: "nmp", withExtension: "mlpackage") {
+            do {
+                compiledURL = try Self.compile(mlpackage)
+            } catch let e as TranscriptionError {
+                throw e
+            } catch {
+                throw TranscriptionError.modelLoadFailed(String(describing: error))
+            }
+        } else {
             throw TranscriptionError.modelResourceMissing
         }
         do {
-            let compiled = try Self.compile(url)
-            self.model = try MLModel(contentsOf: compiled)
-        } catch let e as TranscriptionError {
-            throw e
+            self.model = try MLModel(contentsOf: compiledURL)
         } catch {
             throw TranscriptionError.modelLoadFailed(String(describing: error))
         }
