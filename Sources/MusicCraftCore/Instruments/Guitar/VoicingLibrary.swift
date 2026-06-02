@@ -22,8 +22,11 @@ public enum VoicingLibrary {
             return []
         }
 
-        // Load bundled voicings and find matches
-        guard let positions = loadBundledVoicings()[chordToJSONKey(chord)] else {
+        // The bundled JSON spells some roots flat (Bb, Eb, Ab) and others sharp (C#, F#), so try
+        // the chord's sharp spelling, then its enharmonic flat spelling, before giving up — without
+        // this, B♭/E♭/A♭ chords miss the lookup and render no voicing. Uses the decoded cache.
+        guard let positions = cachedVoicings[chordToJSONKey(chord, useFlat: false)]
+            ?? cachedVoicings[chordToJSONKey(chord, useFlat: true)] else {
             return []
         }
 
@@ -35,8 +38,9 @@ public enum VoicingLibrary {
 
     /// Convert a Chord to the JSON key string used in guitar_voicings.json.
     /// Maps Chord (root + quality enum) to ASCII chord name string.
-    private static func chordToJSONKey(_ chord: Chord) -> String {
-        let rootDisplay = chord.root.displayName.replacingOccurrences(of: "♯", with: "#").replacingOccurrences(of: "♭", with: "b")
+    private static func chordToJSONKey(_ chord: Chord, useFlat: Bool) -> String {
+        let name = useFlat ? chord.root.flatName : chord.root.displayName
+        let rootDisplay = name.replacingOccurrences(of: "♯", with: "#").replacingOccurrences(of: "♭", with: "b")
         return rootDisplay + chord.quality.shortSuffix
     }
 

@@ -55,6 +55,23 @@ final class VoicingLibraryTests: XCTestCase {
         }
     }
 
+    func testFlatSpelledChordsResolve() {
+        // Regression (0.1.4): the JSON spells these roots flat (Bb/Eb/Ab); the lookup used to
+        // build only the sharp key (A#/D#/G#) and returned nothing. Dual-spelling lookup fixes it.
+        for root in [NoteName.As, .Ds, .Gs] {  // B♭, E♭, A♭
+            let chord = Chord(root: root, quality: .major)
+            let voicings = VoicingLibrary.voicings(for: chord, tuning: .standard)
+            XCTAssertGreaterThan(voicings.count, 0, "Expected voicings for flat-spelled \(chord.displayName)")
+        }
+
+        // Guard the sharp path: C♯ / F♯ are spelled sharp in the JSON and must still resolve.
+        for root in [NoteName.Cs, .Fs] {  // C♯, F♯
+            let chord = Chord(root: root, quality: .major)
+            let voicings = VoicingLibrary.voicings(for: chord, tuning: .standard)
+            XCTAssertGreaterThan(voicings.count, 0, "Expected voicings for sharp-spelled \(chord.displayName)")
+        }
+    }
+
     func testCommonChordsHaveVoicings() {
         let commonChords = [
             (NoteName.C, ChordQuality.major),

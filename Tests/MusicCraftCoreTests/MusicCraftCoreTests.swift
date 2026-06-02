@@ -3,6 +3,6 @@ import XCTest
 
 final class MusicCraftCoreTests: XCTestCase {
     func testVersionIsSet() {
-        XCTAssertEqual(musicCraftCoreVersion, "0.1.3")
+        XCTAssertEqual(musicCraftCoreVersion, "0.1.4")
     }
 }

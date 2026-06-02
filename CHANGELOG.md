@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-06-01
+
+### Fixed — VoicingLibrary resolves flat-spelled chords (B♭, E♭, A♭)
+- **`VoicingLibrary.voicings(for:)` now resolves chords whose bundled spelling is flat** (B♭, E♭, A♭) — previously the lookup only built the sharp-spelled JSON key (A♯, D♯, G♯), which is absent from `guitar_voicings.json` (it stores those roots as Bb/Eb/Ab), so those chords missed the lookup and returned **no voicing**. The lookup now tries the sharp spelling, then the enharmonic flat spelling, before giving up. Also switched the lookup to the decoded `cachedVoicings` (it was re-decoding the JSON on every call). Sharp-spelled roots (C♯, F♯) are unaffected. New `VoicingLibraryTests.testFlatSpelledChordsResolve`. `musicCraftCoreVersion` → "0.1.4".
+
 ## [0.1.3] - 2026-06-01
 
 ### Changed — unified enharmonic spelling (one flat/sharp policy across key name, diatonic chords, detected chords)
