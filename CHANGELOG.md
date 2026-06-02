@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-06-01
+
+### Changed — unified enharmonic spelling (one flat/sharp policy across key name, diatonic chords, detected chords)
+- **`MusicalKey.prefersFlats` is now the single source of truth** for whether a key is spelled with flats (major: F, B♭, E♭, A♭, D♭; minor: Dm, Gm, Cm, Fm, B♭m, E♭m) or sharps. The policy previously lived privately in `DiatonicChordGenerator.keyUsesFlats`; that method now **delegates** to `prefersFlats` (no second copy of the table), so the diatonic output (`generate(for:)` chord names, romans, triads) is byte-identical and its existing tests pass unchanged.
+- **`MusicalKey.displayName` now spells flat keys with flats.** It used `root.displayName` (sharp-only), so a C♯/D♭-major key labelled "C♯ major"; it now returns "D♭ major" (and "B♭ minor", etc.) while sharp/natural keys ("A major", "F♯ minor", "E major") are unchanged. `DiatonicChordGenerator.keyDisplayName(for:)` delegates to `MusicalKey.displayName` (one key-name path; they already agreed for every key root via `spelledRoot`, now covered by a test).
+- **Added `Chord.displayName(in: MusicalKey)`** — a key-aware chord name that spells the root with the key's preferred accidental (a detected C♯ / A♯m / G♯ renders "D♭" / "B♭m" / "A♭" in D♭ major). The key-blind `Chord.displayName` is **unchanged** (sharp-spelled no-key fallback; existing callers/tests use it).
+- **Why:** on-device a single take showed three accidental systems at once — key tonic "C♯", diatonic D♭·A♭, detected C♯·A♯m·G♯. Consumers can now render the key name, the diatonic suggestions, and the detected chords through one policy. New tests cover `prefersFlats`, the enharmonic `displayName`, `displayName(in:)` for flat and sharp keys, and `keyDisplayName == displayName`. No audio-detection or key-inference behavior changed. `musicCraftCoreVersion` → "0.1.3".
+
 ## [0.1.2] - 2026-06-01
 
 ### Added — iOS 26 SpeechAnalyzer transcription path in LyricsExtractor (SFSpeechRecognizer fallback)

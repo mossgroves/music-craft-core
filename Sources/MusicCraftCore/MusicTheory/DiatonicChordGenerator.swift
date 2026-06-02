@@ -97,11 +97,9 @@ public enum DiatonicChordGenerator {
 
     /// Display name for a key using proper enharmonic spelling.
     public static func keyDisplayName(for key: MusicalKey) -> String {
-        let root = spelledRoot(for: key)
-        switch key.mode {
-        case .major: return "\(root.displayString) major"
-        case .minor: return "\(root.displayString) minor"
-        }
+        // One key-name path: MusicalKey.displayName applies the same prefersFlats policy
+        // and agrees with spelledRoot for every key root (covered by a test).
+        key.displayName
     }
 
     /// Key signature description (e.g., "1♯", "3♭", "no ♯ or ♭").
@@ -193,19 +191,10 @@ public enum DiatonicChordGenerator {
         accidental(forPitch: note.rawValue, letter: letter)
     }
 
+    /// Delegates to `MusicalKey.prefersFlats` — the one enharmonic-policy table.
+    /// (Diatonic spelling output is byte-identical to the prior inline table.)
     private static func keyUsesFlats(root: NoteName, mode: KeyMode) -> Bool {
-        switch mode {
-        case .major:
-            switch root {
-            case .F, .As, .Ds, .Gs, .Cs: return true
-            default: return false
-            }
-        case .minor:
-            switch root {
-            case .D, .G, .C, .F, .As, .Ds: return true
-            default: return false
-            }
-        }
+        MusicalKey(root: root, mode: mode).prefersFlats
     }
 
     private static func romanNumeral(degree: Int, quality: ChordQuality) -> String {

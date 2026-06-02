@@ -222,6 +222,53 @@ final class MusicTheoryTests: XCTestCase {
         XCTAssertEqual(aMinor.displayName, "A minor")
     }
 
+    // MARK: - Enharmonic spelling (0.1.3)
+
+    func testMusicalKeyPrefersFlats() {
+        XCTAssertTrue(MusicalKey(root: .Cs, mode: .major).prefersFlats)   // D♭ major
+        XCTAssertFalse(MusicalKey(root: .A, mode: .major).prefersFlats)   // A major
+        XCTAssertTrue(MusicalKey(root: .As, mode: .minor).prefersFlats)   // B♭ minor
+        XCTAssertFalse(MusicalKey(root: .E, mode: .minor).prefersFlats)   // E minor
+    }
+
+    func testMusicalKeyDisplayNameEnharmonic() {
+        XCTAssertEqual(MusicalKey(root: .Cs, mode: .major).displayName, "D♭ major")
+        XCTAssertEqual(MusicalKey(root: .As, mode: .minor).displayName, "B♭ minor")
+        XCTAssertEqual(MusicalKey(root: .A, mode: .minor).displayName, "A minor")
+        XCTAssertEqual(MusicalKey(root: .Fs, mode: .minor).displayName, "F♯ minor")
+        XCTAssertEqual(MusicalKey(root: .E, mode: .major).displayName, "E major")
+    }
+
+    func testChordDisplayNameInKey() {
+        let dFlatMajor = MusicalKey(root: .Cs, mode: .major)
+        XCTAssertEqual(Chord(root: .Cs, quality: .major).displayName(in: dFlatMajor), "D♭")
+        XCTAssertEqual(Chord(root: .As, quality: .minor).displayName(in: dFlatMajor), "B♭m")
+        XCTAssertEqual(Chord(root: .Gs, quality: .major).displayName(in: dFlatMajor), "A♭")
+        XCTAssertEqual(Chord(root: .F, quality: .sus4).displayName(in: dFlatMajor), "Fsus4")
+
+        // Sharp key: the key-aware name spells sharp.
+        let aMajor = MusicalKey(root: .A, mode: .major)
+        XCTAssertEqual(Chord(root: .Cs, quality: .minor).displayName(in: aMajor), "C♯m")
+    }
+
+    func testChordKeyBlindDisplayNameUnchanged() {
+        // The no-key fallback still spells sharp regardless of key context.
+        XCTAssertEqual(Chord(root: .Cs, quality: .major).displayName, "C♯")
+        XCTAssertEqual(Chord(root: .As, quality: .minor).displayName, "A♯m")
+    }
+
+    func testKeyDisplayNameMatchesMusicalKeyDisplayName() {
+        // The generator's key-name path equals MusicalKey.displayName for a flat key…
+        let dFlatMajor = MusicalKey(root: .Cs, mode: .major)
+        XCTAssertEqual(DiatonicChordGenerator.keyDisplayName(for: dFlatMajor), dFlatMajor.displayName)
+        XCTAssertEqual(DiatonicChordGenerator.keyDisplayName(for: dFlatMajor), "D♭ major")
+
+        // …and a sharp key.
+        let gSharpMinor = MusicalKey(root: .Gs, mode: .minor)
+        XCTAssertEqual(DiatonicChordGenerator.keyDisplayName(for: gSharpMinor), gSharpMinor.displayName)
+        XCTAssertEqual(DiatonicChordGenerator.keyDisplayName(for: gSharpMinor), "G♯ minor")
+    }
+
     func testMusicalKeyEquality() {
         let k1 = MusicalKey(root: .C, mode: .major)
         let k2 = MusicalKey(root: .C, mode: .major)

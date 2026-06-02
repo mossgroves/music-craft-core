@@ -18,12 +18,30 @@ public struct MusicalKey: Equatable, Hashable, Sendable {
         self.mode = mode
     }
 
-    /// Display name (e.g., "C major", "A minor").
-    public var displayName: String {
+    /// Whether this key is conventionally spelled with flats (e.g. D♭ major, B♭ minor)
+    /// rather than sharps. The single source of truth for enharmonic spelling across the
+    /// key name, the diatonic chord names, and key-aware chord names —
+    /// `DiatonicChordGenerator.keyUsesFlats` and `Chord.displayName(in:)` both read this.
+    public var prefersFlats: Bool {
         switch mode {
-        case .major: return "\(root.displayName) major"
-        case .minor: return "\(root.displayName) minor"
+        case .major:
+            switch root {
+            case .F, .As, .Ds, .Gs, .Cs: return true
+            default: return false
+            }
+        case .minor:
+            switch root {
+            case .D, .G, .C, .F, .As, .Ds: return true
+            default: return false
+            }
         }
+    }
+
+    /// Display name spelled with the key's preferred accidental
+    /// (e.g., "D♭ major", "B♭ minor", "A minor", "F♯ minor").
+    public var displayName: String {
+        let rootName = prefersFlats ? root.flatName : root.displayName
+        return "\(rootName) \(mode == .major ? "major" : "minor")"
     }
 
     /// Diatonic chord qualities for each scale degree (1-7).

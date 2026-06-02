@@ -40,6 +40,14 @@ public struct Chord: Equatable, Hashable, Sendable, Identifiable {
         return "\(root.displayName)\(quality.shortSuffix)"
     }
 
+    /// Key-aware display name: spells the root with `key`'s preferred accidental, so a
+    /// detected C♯ renders "D♭" in D♭ major. The key-blind `displayName` above stays the
+    /// no-key fallback (existing callers/tests use it).
+    public func displayName(in key: MusicalKey) -> String {
+        let rootName = key.prefersFlats ? root.flatName : root.displayName
+        return "\(rootName)\(quality.shortSuffix)"
+    }
+
     /// Full display name (e.g., "A minor seventh").
     public var fullDisplayName: String {
         return "\(root.displayName) \(quality.displayName)"
