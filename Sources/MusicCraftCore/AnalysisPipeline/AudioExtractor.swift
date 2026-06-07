@@ -48,13 +48,13 @@ public enum AudioExtractor {
         // so it only catches digital / near silence and never suppresses real fingerpicking.
         let peak = buffer.lazy.map { Swift.abs($0) }.max() ?? 0
         guard peak >= silenceFloorPeak else {
-            return Result(chordSegments: [], key: nil, contour: [], detectedNotes: [], duration: duration)
+            return Result(chordSegments: [], key: nil, contour: [], detectedNotes: [], duration: duration, voicingDensity: 0)
         }
 
         guard let transcriber = sharedBasicPitchTranscriber,
               let transcription = try? transcriber.transcribe(buffer, sampleRate: sampleRate) else {
             // Model unavailable (or buffer empty) → never crash; emit a well-formed empty Result.
-            return Result(chordSegments: [], key: nil, contour: [], detectedNotes: [], duration: duration)
+            return Result(chordSegments: [], key: nil, contour: [], detectedNotes: [], duration: duration, voicingDensity: 0)
         }
         let notes = transcription.notes
         let chordSegments = noteNativeChordSegments(notes: notes, duration: duration)   // FULL polyphony → note-native (the validated win)
@@ -71,7 +71,8 @@ public enum AudioExtractor {
         }
         let contour = deriveContour(from: skyline(of: notes))                           // contour = melodic skyline (single line)
         let key = inferKey(from: chordSegments, fallbackNotes: detectedNotes)           // chord-based first, full-poly fallback
-        return Result(chordSegments: chordSegments, key: key, contour: contour, detectedNotes: detectedNotes, duration: duration)
+        // Take-type signal over the FULL polyphony (same `notes`) — not the melodic skyline.
+        return Result(chordSegments: chordSegments, key: key, contour: contour, detectedNotes: detectedNotes, duration: duration, voicingDensity: voicingDensity(of: notes))
     }
 
     // MARK: - Basic Pitch note source
@@ -218,6 +219,44 @@ public enum AudioExtractor {
         return out
     }
 
+    // MARK: - Voicing density (take-type signal)
+
+    /// Mean number of simultaneously-sounding DISTINCT PITCH CLASSES over the buffer's sounding time.
+    /// ~1.0 for a monophonic line (a sung/hummed take); higher when notes stack (a played/strummed take).
+    /// Distinct pitch classes (not raw note count) so octave doublings/overtones don't inflate it.
+    ///
+    /// A take-type *measure*, not a verdict: MCC ships the number; the sung/played threshold is the
+    /// consumer's policy (mirrors `KeyCandidate.score` vs `HarmonyKeyGate.minScore`). Pure +
+    /// deterministic by construction. Computed over the FULL polyphony (not the melodic skyline).
+    static func voicingDensity(of notes: [TranscribedNote]) -> Double {
+        guard !notes.isEmpty else { return 0 }
+
+        // Boundary times: every note's onset and offset, sorted + de-duplicated.
+        var boundarySet = Set<Double>()
+        for n in notes {
+            boundarySet.insert(n.onsetTime)
+            boundarySet.insert(n.onsetTime + n.duration)
+        }
+        let bounds = boundarySet.sorted()
+        guard bounds.count >= 2 else { return 0 }
+
+        var weighted = 0.0   // Σ (distinct PCs) × (slice length), over slices with ≥1 active note
+        var covered = 0.0    // Σ (slice length), over those same slices — the take's sounding time
+        for k in 0..<(bounds.count - 1) {
+            let a = bounds[k], b = bounds[k + 1]
+            guard b > a else { continue }
+            var pcs = Set<Int>()
+            for n in notes where n.onsetTime < b && n.onsetTime + n.duration > a {
+                pcs.insert(((n.pitchMIDI % 12) + 12) % 12)
+            }
+            if !pcs.isEmpty {
+                weighted += Double(pcs.count) * (b - a)
+                covered += (b - a)
+            }
+        }
+        return covered > 0 ? weighted / covered : 0
+    }
+
     // MARK: - Configuration
 
     /// Tuning parameters for audio extraction.
@@ -286,6 +325,12 @@ public enum AudioExtractor {
         public let detectedNotes: [DetectedNote]
         /// Total duration of the analyzed buffer in seconds.
         public let duration: TimeInterval
+        /// Take-type signal: the mean number of simultaneously-sounding DISTINCT PITCH CLASSES over the
+        /// take's sounding time, from the Basic Pitch polyphony. ~1.0 for a monophonic/sung take; higher
+        /// for a polyphonic/played one. Lets a consumer route sung vs played (e.g. suppress "chords heard"
+        /// on a bare sung line); the sung/played threshold is the consumer's policy, not MCC's. `0` for an
+        /// empty/silence-guarded result.
+        public let voicingDensity: Double
 
         /// Creates an extraction result.
         public init(
@@ -293,13 +338,15 @@ public enum AudioExtractor {
             key: MusicalKey?,
             contour: [ContourNote],
             detectedNotes: [DetectedNote],
-            duration: TimeInterval
+            duration: TimeInterval,
+            voicingDensity: Double
         ) {
             self.chordSegments = chordSegments
             self.key = key
             self.contour = contour
             self.detectedNotes = detectedNotes
             self.duration = duration
+            self.voicingDensity = voicingDensity
         }
     }
 

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-06-06
+
+### Added — `voicingDensity` on `AudioExtractor.Result` (take-type signal)
+- **`AudioExtractor.Result` now carries `voicingDensity: Double`** — the mean number of simultaneously-sounding **distinct pitch classes** over the take's sounding time, computed from the Basic Pitch polyphony (the full note set, not the melodic skyline). **~1.0 for a monophonic/sung take; higher for a polyphonic/played one.** Distinct pitch classes (not raw note count) so octave doublings/overtones don't inflate it. Lets a consumer tell a sung take from a played one — e.g. Songcatcher today misroutes sung takes to "chords heard" because the note-native chord namer names a chord even from a single sung line. **MCC ships the measure; the sung/played threshold is the consumer's policy** (mirrors `KeyCandidate.score` vs `HarmonyKeyGate.minScore`). Internal pure helper `AudioExtractor.voicingDensity(of:)`; `0` for an empty / silence-guarded / model-unavailable result. **Additive** — a new field + a new (non-defaulted) `Result.init` parameter; no behaviour change to existing fields, no new dependency, no third-party integration. Unit-validated + deterministic (new `VoicingDensityTests`); no device gate (the device-validated piece is the consumer's threshold). `musicCraftCoreVersion` → "0.1.5".
+
 ## [0.1.4] - 2026-06-01
 
 ### Fixed — VoicingLibrary resolves flat-spelled chords (B♭, E♭, A♭)

@@ -485,7 +485,8 @@ final class AudioExtractorTests: XCTestCase {
             key: MusicalKey(root: .C, mode: .major),
             contour: [note],
             detectedNotes: [detectedNote],
-            duration: 1.0
+            duration: 1.0,
+            voicingDensity: 0
         )
 
         let result2 = AudioExtractor.Result(
@@ -493,7 +494,8 @@ final class AudioExtractorTests: XCTestCase {
             key: MusicalKey(root: .C, mode: .major),
             contour: [note],
             detectedNotes: [detectedNote],
-            duration: 1.0
+            duration: 1.0,
+            voicingDensity: 0
         )
 
         XCTAssertEqual(result, result2, "Results with same content should be equal")
@@ -572,7 +574,8 @@ final class AudioExtractorTests: XCTestCase {
             key: nil,
             contour: [],
             detectedNotes: [],
-            duration: 1.0
+            duration: 1.0,
+            voicingDensity: 0
         )
 
         XCTAssertEqual(result.duration, 1.0)
@@ -603,7 +606,8 @@ final class AudioExtractorTests: XCTestCase {
             key: nil,
             contour: [],
             detectedNotes: [],
-            duration: 1.0
+            duration: 1.0,
+            voicingDensity: 0
         )
 
         Task {
