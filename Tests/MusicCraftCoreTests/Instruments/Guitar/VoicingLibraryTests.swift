@@ -36,12 +36,22 @@ final class VoicingLibraryTests: XCTestCase {
         XCTAssertEqual(voicings.count, 0)
     }
 
-    func testUnknownChordReturnsEmpty() {
-        // A chord quality not in our curated set
+    func testDiminishedNowResolves() {
+        // Pre-chords-db (legacy curated subset) this returned empty — only 6 qualities existed.
+        // chords-db (adopted 2026-06-17) covers all 16 MCC qualities, so diminished now resolves.
         let chord = Chord(root: .C, quality: .diminished)
         let voicings = VoicingLibrary.voicings(for: chord, tuning: .standard)
 
-        XCTAssertEqual(voicings.count, 0)
+        XCTAssertGreaterThan(voicings.count, 0, "chords-db provides diminished voicings")
+    }
+
+    func testEveryQualityResolves() {
+        // chords-db coverage: every MCC ChordQuality maps to a real chords-db suffix.
+        for quality in ChordQuality.allCases {
+            let chord = Chord(root: .C, quality: quality)
+            let voicings = VoicingLibrary.voicings(for: chord, tuning: .standard)
+            XCTAssertGreaterThan(voicings.count, 0, "Expected voicings for C \(quality.displayName)")
+        }
     }
 
     func testChordLookupsAreDeterministic() {
