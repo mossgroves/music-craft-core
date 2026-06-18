@@ -588,65 +588,40 @@ struct AudioAnalysisMetrics {
             return "\(rootName):\(modeName)"
         }
 
-        // Parse ground truth JAMS key format: "C:major" or "A:minor"
+        // Parse ground truth JAMS key format: "C:major" / "A:minor" / "Eb:minor" (flats appear).
         let gtParts = groundTruthJAMS.split(separator: ":")
-        let gtRoot = gtParts.count > 0 ? String(gtParts[0]).lowercased() : "c"
+        let gtRootStr = gtParts.count > 0 ? String(gtParts[0]) : "C"
         let gtMode = gtParts.count > 1 ? String(gtParts[1]).lowercased() : "major"
+        let gtIsMajor = gtMode.contains("major")
+        let gtPC = keyRootPitchClass(gtRootStr)
 
-        // Check for exact match
-        let exactMatch = detectedStr == groundTruthJAMS.lowercased()
+        // Compare by PITCH CLASS, not by spelled string. Two bugs were silently understating every
+        // key-accuracy number until 2026-06-18: (1) the detected string is uppercase ("E:major") but
+        // was compared to a lowercased ground truth ("e:major") → exactMatch could NEVER be true;
+        // (2) the detector spells sharp while JAMS spells flat (D# vs Eb are the same key) → enharmonic
+        // matches were missed. NoteName.rawValue IS the pitch class (C=0 … B=11), so compare those.
+        let detPC = detected?.root.rawValue
+        let detIsMajor = detected.map { $0.mode == .major }
 
-        // Check for root match (same root, may differ in mode)
+        // Root match (same root pitch class, mode may differ).
         let rootMatch: Bool = {
-            guard let detStr = detectedStr else { return false }
-            let detParts = detStr.split(separator: ":")
-            return detParts.count > 0 && String(detParts[0]).lowercased() == gtRoot
+            guard let detPC, let gtPC else { return false }
+            return detPC == gtPC
         }()
 
-        // Check for relative key match (same pitch collection)
+        // Exact match: same root pitch class AND same mode.
+        let exactMatch: Bool = {
+            guard let detPC, let gtPC, let detIsMajor else { return false }
+            return detPC == gtPC && detIsMajor == gtIsMajor
+        }()
+
+        // Relative-key match (same scale, swapped tonic — C major ↔ A minor). Exact counts as relative
+        // too. The relative minor sits 3 semitones below its major.
         let relativeKeyMatch: Bool = {
-            guard let detected = detected else { return exactMatch }
-
-            // Relative keys: C major ↔ A minor, G major ↔ E minor, etc.
-            // Relative minor is 3 semitones below the major (relative_minor_root = major_root - 3)
-            let relativeKeyTable: [MusicCraftCore.NoteName: MusicCraftCore.NoteName] = [
-                .C: .A,
-                .Cs: .As,
-                .D: .B,
-                .Ds: .Cs,
-                .E: .Cs,
-                .F: .D,
-                .Fs: .Ds,
-                .G: .E,
-                .Gs: .Fs,
-                .A: .Fs,
-                .As: .Gs,
-                .B: .Gs,
-            ]
-
-            let detectedRootStr = detected.root.displayName.replacingOccurrences(of: "♯", with: "#").lowercased()
-
-            // Same mode and same root
-            if gtMode.contains("major") && detected.mode == .major {
-                return detectedRootStr == gtRoot.lowercased()
-            } else if gtMode.contains("minor") && detected.mode == .minor {
-                return detectedRootStr == gtRoot.lowercased()
-            } else if gtMode.contains("major") && detected.mode == .minor {
-                // Detected minor is relative to gt major: check if detected.root is relative to gt.root
-                if let relativeMinor = relativeKeyTable[detected.root],
-                   relativeMinor.displayName.replacingOccurrences(of: "♯", with: "#").lowercased() == gtRoot.lowercased() {
-                    return true
-                }
-            } else if gtMode.contains("minor") && detected.mode == .major {
-                // Detected major is relative to gt minor: check if detected.root is relative major to gt.root
-                // Reverse lookup: find which major key has gtRoot as its relative minor
-                for (majorRoot, minorRoot) in relativeKeyTable {
-                    if minorRoot.displayName.replacingOccurrences(of: "♯", with: "#").lowercased() == gtRoot.lowercased() && majorRoot == detected.root {
-                        return true
-                    }
-                }
-            }
-
+            guard let detPC, let gtPC, let detIsMajor else { return false }
+            if exactMatch { return true }
+            if gtIsMajor && !detIsMajor { return detPC == ((gtPC - 3) % 12 + 12) % 12 }
+            if !gtIsMajor && detIsMajor { return detPC == ((gtPC + 3) % 12 + 12) % 12 }
             return false
         }()
 
@@ -657,6 +632,24 @@ struct AudioAnalysisMetrics {
             detectedKey: detectedStr,
             groundTruthKey: groundTruthJAMS
         )
+    }
+
+    /// Pitch class (0–11, C=0) for a key-root string from JAMS or our own display: "C", "F#", "Eb",
+    /// "Db", "A♯"… Tolerates case and both ASCII (#/b) and Unicode (♯/♭) accidentals. nil if
+    /// unparseable. The leading letter is the note (so a leading "b" is the note B); any subsequent
+    /// "b" is a flat.
+    static func keyRootPitchClass(_ raw: String) -> Int? {
+        let s = raw.trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: "♯", with: "#")
+            .replacingOccurrences(of: "♭", with: "b")
+            .lowercased()
+        let base: [Character: Int] = ["c": 0, "d": 2, "e": 4, "f": 5, "g": 7, "a": 9, "b": 11]
+        guard let first = s.first, let b = base[first] else { return nil }
+        var pc = b
+        for ch in s.dropFirst() {
+            if ch == "#" { pc += 1 } else if ch == "b" { pc -= 1 }
+        }
+        return ((pc % 12) + 12) % 12
     }
 
     // MARK: - Lyric Comparison Helpers
