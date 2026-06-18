@@ -22,6 +22,33 @@ public enum MelodyKeyInference {
     static let kkMajor: [Double] = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
     static let kkMinor: [Double] = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
 
+    // MARK: - Structural re-rank tuning (2026-06-18; docs/specs/tonic-key-detection-redesign.md, Phase 1)
+    //
+    // The Krumhansl–Kessler correlation above is order-blind: it counts a note's weight but not WHEN
+    // it sounds, so a D-then-G drone (home = D) read as G major — the histogram can't tell I from IV.
+    // The cues a listener uses to hear "home" — the note you OPEN on, and (corroborating) the note you
+    // END on — live in `DetectedNote.onsetTime`/`duration`, which the histogram discards. We restore
+    // them as a *re-rank*, deliberately bounded so they can only break a genuine near-tie, never
+    // overturn a clear histogram winner. All values are starting points, tuned against the 16
+    // existing tests as fixed anchors and frozen on real Taylor 812ce-n recordings (Step 4).
+    /// Top-N histogram candidates eligible for the re-rank.
+    static let shortlistN = 6
+    /// Near-tie window (normalised correlation): two candidates this close are "tied" for the abstain
+    /// check. A clear histogram winner leaves no near-tie → it's never disturbed (existing-test floor).
+    static let contendMargin = 0.05
+    /// How far behind the histogram leader the OPENING note's own key may sit and still overturn it —
+    /// but only on a classic ambiguity (relative / fifth / fourth). Larger than `contendMargin`
+    /// because the KK profile systematically scores the dominant above the subdominant, so the
+    /// rightful tonic of a I-IV drone (D under a D→G vamp) trails the IV (G) by more than a hair —
+    /// yet still bounded so a *decisive* winner (a clearly-stated key that merely opens on its V) is
+    /// never flipped. The single most load-bearing constant; frozen on real Taylor takes (Step 4).
+    static let openingOverturnMargin = 0.15
+    /// On a low-confidence near-tie (a classic ambiguity with conflicting/weak structural evidence),
+    /// the winner's score is capped here so it sits below a consumer's tonal-clarity gate — the key
+    /// surfaces fall quiet ("you pick") rather than commit a confident coin-flip. Kept below the
+    /// HarmonyKeyGate floor Sanctuary uses; the raw-correlation scale is otherwise unchanged.
+    static let nearTieScoreCeiling = 0.45
+
     /// Infer the top key candidates from detected notes.
     ///
     /// - Parameters:
@@ -76,17 +103,108 @@ public enum MelodyKeyInference {
             return a.key.mode == .major && b.key.mode == .minor       // stable, NOT minor-biased
         }
 
-        // Build candidates. score = winning correlation clamped to [0, 1] (a 0–1 confidence).
-        // NOTE: this score's scale differs from the pre-0.0.12 diatonic-fraction score.
-        // Sanctuary's HarmonyKeyGate threshold (0.6) was calibrated to the old score and will
-        // likely need recalibration — see the eval re-run distribution. (No gate changed here.)
+        // ---- Structural re-rank (2026-06-18) — break a near-tie with the note timing the histogram
+        // throws away. A clear histogram winner (nobody within `contendMargin`) is left untouched,
+        // so every decisive correlation call — and the existing-test floor — is preserved.
+        let opening = Self.boundaryPitchClass(notes, atStart: true)
+        let closing = Self.boundaryPitchClass(notes, atStart: false)
+        func corrNorm(_ c: Double) -> Double { (c + 1) / 2 }   // [-1,1] → [0,1] for a fair gap
+
+        func favored(by pc: Int?, _ a: Scored, _ b: Scored) -> Scored? {
+            guard let pc else { return nil }
+            if a.key.root.rawValue == pc { return a }
+            if b.key.root.rawValue == pc { return b }
+            return nil
+        }
+
+        let leader = scored[0]
+        var winner = leader
+        var lowConfidence = false
+
+        // The OPENING note is a strong "home" cue the histogram ignores. It matters most for exactly
+        // the pair the KK profile CAN'T separate: the perfect-fifth/fourth (I vs V / I vs IV) and the
+        // relative (I vs vi). The profile always scores the dominant above the subdominant, so a
+        // D-then-G drone (home = D) leads to G major (tonic+fifth fits better than tonic+fourth) —
+        // the headline bug. When the histogram leader and the opening note's own best key form one of
+        // these classic ambiguities AND the opening key trails by no more than `openingOverturnMargin`
+        // (bounded so a *decisive* winner can never be flipped — the existing-test floor), trust the
+        // opening: it's home. The closing note then corroborates (agrees) or, on a vamp/loop, conflicts
+        // (only cuts confidence — the end of a loop is just where it was cut).
+        if let openingKey = scored.first(where: { $0.key.root.rawValue == opening }),
+           openingKey.key != leader.key,
+           Self.isClassicAmbiguity(leader.key.root.rawValue, openingKey.key.root.rawValue),
+           corrNorm(leader.corr) - corrNorm(openingKey.corr) <= openingOverturnMargin {
+            winner = openingKey
+            if let closing, closing != openingKey.key.root.rawValue { lowConfidence = true }  // close disagrees
+        } else {
+            // No opening flip — but if the top two are a genuine near-tie on a classic ambiguity and
+            // the opening doesn't disambiguate, we're honestly unsure: cut confidence so the consumer
+            // gate falls quiet ("you pick").
+            let shortlist = Array(scored.prefix(shortlistN))
+            if shortlist.count >= 2,
+               corrNorm(shortlist[0].corr) - corrNorm(shortlist[1].corr) <= contendMargin,
+               Self.isClassicAmbiguity(shortlist[0].key.root.rawValue, shortlist[1].key.root.rawValue),
+               favored(by: opening, shortlist[0], shortlist[1]) == nil {
+                lowConfidence = true
+            }
+        }
+
+        // Build candidates. The winner leads; the rest follow in histogram order. score stays on the
+        // raw-correlation scale (Sanctuary's HarmonyKeyGate semantics unchanged); a low-confidence
+        // near-tie is capped below the gate floor so the header/harmony falls quiet ("you pick")
+        // instead of committing a coin-flip — and every non-winner is clamped ≤ the winner so the
+        // result is always ranked by score even when the structural cue overruled the histogram.
+        var ordered = scored
+        if let wi = ordered.firstIndex(where: { $0.key == winner.key }), wi != 0 {
+            ordered.insert(ordered.remove(at: wi), at: 0)
+        }
+        let winnerBase = min(1.0, max(0.0, ordered[0].corr))
+        let winnerScore = lowConfidence ? min(winnerBase, nearTieScoreCeiling) : winnerBase
         var result: [KeyCandidate] = []
-        for s in scored.prefix(max(0, maxCandidates)) {
+        for (i, s) in ordered.prefix(max(0, maxCandidates)).enumerated() {
+            let base = min(1.0, max(0.0, s.corr))
             result.append(KeyCandidate(key: s.key,
-                                       score: min(1.0, max(0.0, s.corr)),
+                                       score: i == 0 ? winnerScore : min(base, winnerScore),
                                        tonicFrequency: s.tonicFreq))
         }
         return result
+    }
+
+    /// The pitch class at the take's start (`atStart: true`) or end — the boundary note's pitch
+    /// class, the structural cue for "home". Within a SHORT edge window anchored at the very
+    /// first onset (or last offset) the most SALIENT note (longest, then most-confident) is taken,
+    /// so a brief BasicPitch transient / breath / pickup at the edge can't masquerade as the
+    /// boundary while a held note a beat in does. Ties break toward the literal edge (earliest onset
+    /// for the start, latest offset for the end) then `midiNote`, so the result is fully
+    /// deterministic and independent of input array order. nil if there are no notes.
+    static func boundaryPitchClass(_ notes: [DetectedNote], atStart: Bool, window: TimeInterval = 0.15) -> Int? {
+        guard !notes.isEmpty else { return nil }
+        let edge: [DetectedNote]
+        if atStart {
+            let anchor = notes.map(\.onsetTime).min() ?? 0
+            edge = notes.filter { $0.onsetTime <= anchor + window }
+        } else {
+            let anchor = notes.map { $0.onsetTime + $0.duration }.max() ?? 0
+            edge = notes.filter { ($0.onsetTime + $0.duration) >= anchor - window }
+        }
+        let pick = edge.max(by: { lhs, rhs in
+            if lhs.duration != rhs.duration { return lhs.duration < rhs.duration }       // most salient first
+            if lhs.confidence != rhs.confidence { return lhs.confidence < rhs.confidence }
+            if atStart, lhs.onsetTime != rhs.onsetTime { return lhs.onsetTime > rhs.onsetTime } // tie → earliest onset
+            if !atStart {
+                let le = lhs.onsetTime + lhs.duration, re = rhs.onsetTime + rhs.duration
+                if le != re { return le < re }                                            // tie → latest offset
+            }
+            return lhs.midiNote > rhs.midiNote                                            // final stable tie-break
+        })
+        return pick.map { (($0.pitchClass % 12) + 12) % 12 }
+    }
+
+    /// True when two tonic pitch classes form a classic key ambiguity a pitch histogram can't resolve:
+    /// relative (±3 semitones, I vs vi), perfect fifth (±7, I vs V), or perfect fourth (±5, I vs IV).
+    static func isClassicAmbiguity(_ a: Int, _ b: Int) -> Bool {
+        let d = ((b - a) % 12 + 12) % 12
+        return d == 3 || d == 9 || d == 7 || d == 5
     }
 
     /// Pearson correlation coefficient between two equal-length vectors. Returns 0 when either
