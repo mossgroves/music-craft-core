@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Note-native tempo estimation** — `TempoEstimator.estimateTempo(noteOnsets:)` (2026-07-21). Tempo was the last subsystem still fed by the spectral-flux front-end, whose documented weakness on acoustic guitar (TASKS: all five GuitarSet fixtures locked to 1/3 of ground truth) left consumers with a mostly-abstaining tempo. The new path feeds Basic Pitch's note onsets — the same evidence the note-native chord/key/contour engine already trusts — into the existing TempoHistogram, with strum-cluster collapsing (onsets within 50ms = one gesture) and a `minEvents` abstention floor. **Confidence semantics fixed en route (the dead-axis root cause, measured by test):** the histogram's raw peak-mass share caps ≈0.22 on PERFECT metronomic input, so consumer gates calibrated to the beats path's regularity scale could never pass; the note path reports **IOI consistency** instead (fraction of intervals agreeing with the candidate at 1x/2x/0.5x within ±8%) and ranks candidates by it — steady playing reads ~1.0, rubato reads low, and near-miss/sub-beat peaks the raw histogram can rank first are demoted. +5 tests (steady quarters ≈1.0 confidence, strum-cluster collapse, jittered fingerpicking lands on the beat family, sparse abstains, cluster collapsing).
+
 ## [0.1.5] - 2026-06-06
 
 ### Added — `voicingDensity` on `AudioExtractor.Result` (take-type signal)

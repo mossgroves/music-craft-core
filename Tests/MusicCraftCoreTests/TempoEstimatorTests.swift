@@ -212,4 +212,58 @@ final class TempoEstimatorTests: XCTestCase {
         let estimate = TempoEstimate(bpm: 120.0, confidence: 0.95)
         let _: any Sendable = estimate
     }
+
+    // MARK: - Note-native path (2026-07-21)
+
+    func testNoteOnsetsSteadyQuartersReadTheirTempo() {
+        // Quarter notes at 120 BPM: onsets every 0.5s for 10s.
+        let onsets = stride(from: 0.0, through: 10.0, by: 0.5).map { $0 }
+        let estimates = TempoEstimator.estimateTempo(noteOnsets: onsets)
+        XCTAssertFalse(estimates.isEmpty)
+        XCTAssertEqual(estimates[0].bpm, 120, accuracy: 3, "Steady quarters at 120 read as 120; got \(estimates)")
+        XCTAssertGreaterThan(estimates[0].confidence, 0.9, "Perfect steadiness reads ~1.0 on the consistency scale — this is the scale the consumer's 0.3 gate was calibrated to")
+    }
+
+    func testNoteOnsetsStrumClustersCollapseToOneEventEach() {
+        // Strums at 100 BPM (every 0.6s), each strum = 4 string-onsets 12ms apart. Without
+        // cluster collapsing the micro-IOIs would swamp the histogram with absurd rates.
+        var onsets: [TimeInterval] = []
+        for strum in 0..<20 {
+            let t = Double(strum) * 0.6
+            for string in 0..<4 { onsets.append(t + Double(string) * 0.012) }
+        }
+        let estimates = TempoEstimator.estimateTempo(noteOnsets: onsets)
+        XCTAssertFalse(estimates.isEmpty)
+        XCTAssertEqual(estimates[0].bpm, 100, accuracy: 2, "20 strums at 100 BPM read as 100; got \(estimates)")
+    }
+
+    func testNoteOnsetsJitteredFingerpickingStaysNearTruth() {
+        // Eighth-ish fingerpicking around 90 BPM (events every ~0.333s) with ±25ms human jitter
+        // (deterministic pattern — no randomness in tests).
+        let jitter: [Double] = [0.006, -0.012, 0.015, -0.006, 0.0, 0.012, -0.015, 0.009]
+        let eighthSeconds: Double = 60.0 / 90.0 / 2.0
+        var onsets: [TimeInterval] = []
+        for i in 0..<30 {
+            let base: Double = Double(i) * eighthSeconds
+            onsets.append(base + jitter[i % jitter.count])
+        }
+        let estimates = TempoEstimator.estimateTempo(noteOnsets: onsets)
+        XCTAssertFalse(estimates.isEmpty)
+        // Eighth-note events vote 180 with a half-weight 90 octave — either is acceptable
+        // evidence; assert the primary is one of the pair, not a sub-beat lock.
+        let primary = estimates[0].bpm
+        XCTAssertTrue(abs(primary - 180) < 6 || abs(primary - 90) < 6,
+                      "Jittered eighths at 90 must land on 90 or its 2x, not a sub-beat; got \(estimates)")
+        XCTAssertGreaterThan(estimates[0].confidence, 0.6, "A real (if human) pulse reads mid-high consistency; got \(estimates)")
+    }
+
+    func testNoteOnsetsTooFewEventsAbstain() {
+        XCTAssertTrue(TempoEstimator.estimateTempo(noteOnsets: [0, 0.5, 1.0, 1.5, 2.0]).isEmpty,
+                      "Five events are not a pulse claim")
+    }
+
+    func testCollapseClustersKeepsFirstOfEachGesture() {
+        let collapsed = TempoEstimator.collapseClusters([0, 0.012, 0.024, 0.6, 0.611, 1.2], window: 0.05)
+        XCTAssertEqual(collapsed, [0, 0.6, 1.2])
+    }
 }

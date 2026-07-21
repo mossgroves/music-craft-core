@@ -73,6 +73,107 @@ public enum TempoEstimator {
         public static let `default` = Configuration()
     }
 
+    /// Estimate tempo from NOTE ONSETS — the note-native path (2026-07-21).
+    ///
+    /// Since 0.1.0 the engine is note-native (chords/key/contour all derive from Basic Pitch's
+    /// note events); tempo was the last subsystem still fed by the spectral-flux front-end,
+    /// whose known weakness on acoustic guitar is documented in TASKS (all five GuitarSet
+    /// fixtures locked to 1/3 of ground truth; consumers saw mostly-abstaining tempo on real
+    /// takes). Basic Pitch's onsets are far cleaner rhythmic evidence on guitar than raw flux —
+    /// this entry feeds them into the SAME TempoHistogram the buffer path uses.
+    ///
+    /// One preparation step matters: **cluster collapsing.** A strummed chord is ONE rhythmic
+    /// event played across many strings — its 3–6 note onsets land within a few tens of ms, and
+    /// left as-is each would vote an absurd micro-IOI. Onsets within `clusterWindow` collapse to
+    /// their first member before the histogram sees them (fingerpicked lines, whose notes spread
+    /// wider than the window, pass through untouched).
+    ///
+    /// Returns [] below `minEvents` collapsed events — a handful of notes is not a pulse claim.
+    ///
+    /// CONFIDENCE SEMANTICS (the dead-axis root cause, measured 2026-07-21): the histogram's
+    /// raw peak-mass share is structurally tiny — on PERFECT metronomic input it caps ≈0.22
+    /// (each IOI's vote splits across octave bins and 3-bin smoothing), so a consumer gate
+    /// calibrated to the beats path's regularity scale (~0.9 on steady input) could never pass.
+    /// This path therefore reports **IOI consistency** instead: the fraction of collapsed
+    /// inter-onset intervals that agree with the candidate's beat period at the 1x, 2x, or 0.5x
+    /// level within ±8%. Steady playing → ~1.0; loose but real pulse → mid; rubato → low.
+    /// Candidates are RANKED by that consistency too (histogram weight as tie-break), which
+    /// demotes spurious near-miss peaks and sub-beat locks the raw histogram can rank first —
+    /// the exact failure mode the flux path showed on GuitarSet (1/3-tempo lock).
+    public static func estimateTempo(
+        noteOnsets: [TimeInterval],
+        configuration: Configuration = .default,
+        clusterWindow: TimeInterval = 0.05,
+        minEvents: Int = 6
+    ) -> [TempoEstimate] {
+        let events = collapseClusters(noteOnsets.sorted(), window: clusterWindow)
+        guard events.count >= minEvents else { return [] }
+
+        let minBpm = max(40, Int((60_000.0 / configuration.maxTempoMs).rounded(.down)))
+        let maxBpm = min(200, Int((60_000.0 / configuration.minTempoMs).rounded(.up)))
+
+        // Wider smoothing than the buffer path (5 vs 3): human timing + Basic Pitch's ~11ms
+        // onset quantization scatter votes across neighboring 1-BPM bins.
+        let peaks = TempoHistogram.estimate(
+            onsets: events,
+            minBpm: minBpm,
+            maxBpm: maxBpm,
+            smoothingWindow: 5,
+            maxCandidates: max(3, configuration.maxCandidates)
+        )
+        guard !peaks.isEmpty else { return [] }
+
+        var iois: [TimeInterval] = []
+        for i in 1..<events.count where events[i] - events[i - 1] > 0 {
+            iois.append(events[i] - events[i - 1])
+        }
+        guard !iois.isEmpty else { return [] }
+
+        /// Fraction of IOIs consistent with `bpm` at the beat, double, or half level (±8% — wide
+        /// enough for human jitter, tight enough to reject near-miss tempi like 160 vs true 180).
+        func consistency(_ bpm: Double) -> Double {
+            let period: Double = 60.0 / bpm
+            let levels: [Double] = [period, period * 2.0, period * 0.5]
+            var matched = 0
+            for ioi in iois {
+                for level in levels where abs(ioi - level) <= 0.08 * level {
+                    matched += 1
+                    break
+                }
+            }
+            return Double(matched) / Double(iois.count)
+        }
+
+        var scored: [(bpm: Double, consistency: Double, weight: Double)] = []
+        for peak in peaks {
+            scored.append((bpm: peak.bpm, consistency: consistency(peak.bpm), weight: peak.confidence))
+        }
+        scored.sort { a, b in
+            a.consistency == b.consistency ? a.weight > b.weight : a.consistency > b.consistency
+        }
+        scored = Array(scored.prefix(configuration.maxCandidates))
+
+        let primaryBpm = scored.first!.bpm
+        return scored.enumerated().map { idx, entry in
+            let isHarmonic = idx > 0 && (
+                abs(entry.bpm - primaryBpm * 2.0) < 1.5
+                || abs(entry.bpm - primaryBpm * 0.5) < 1.5
+            )
+            return TempoEstimate(bpm: entry.bpm, confidence: entry.consistency, isHarmonic: isHarmonic)
+        }
+    }
+
+    /// Collapse onsets that fall within `window` of the previous kept event into one (keeping
+    /// the cluster's FIRST onset — the moment the gesture landed). Internal for tests.
+    static func collapseClusters(_ sortedOnsets: [TimeInterval], window: TimeInterval) -> [TimeInterval] {
+        guard !sortedOnsets.isEmpty else { return [] }
+        var events: [TimeInterval] = [sortedOnsets[0]]
+        for onset in sortedOnsets.dropFirst() where onset - events[events.count - 1] > window {
+            events.append(onset)
+        }
+        return events
+    }
+
     private static func estimateTempoFromBeats(beats: [TimeInterval], configuration: Configuration) -> [TempoEstimate] {
         guard beats.count >= 2 else { return [] }
 
