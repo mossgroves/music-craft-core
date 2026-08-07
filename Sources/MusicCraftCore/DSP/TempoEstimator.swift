@@ -100,6 +100,19 @@ public enum TempoEstimator {
     /// Candidates are RANKED by that consistency too (histogram weight as tie-break), which
     /// demotes spurious near-miss peaks and sub-beat locks the raw histogram can rank first —
     /// the exact failure mode the flux path showed on GuitarSet (1/3-tempo lock).
+    ///
+    /// OCTAVE DISAMBIGUATION (2026-08-06, the "6 Human" double-time fix): consistency alone
+    /// CANNOT choose between a tempo and its octave — the level sets of T and T/2 overlap
+    /// almost completely. Measured on "6 Human" (felt ~80): ~47% of collapsed IOI mass sat
+    /// on the SIXTEENTH grid (0.15–0.225s), whose out-of-range base rate (~320) the histogram
+    /// folds once (0.5x, half-weight) into the 159–162 band — and a 0.25x fold is never
+    /// generated, so ~79.5 could not even appear as a peak. The estimator reported 159, the
+    /// 2x harmonic of the felt ~79.5. After the consistency ranking, the winner T is therefore
+    /// re-litigated against T/2 and 2T via `disambiguateOctave` (comb support + strong-weak
+    /// alternation evidence + a gentle log-Gaussian felt-tempo prior — see its doc comment).
+    /// The reported primary is the disambiguated winner; its confidence is that winner's OWN
+    /// IOI consistency, on the same scale as before, so the consumer's 0.3 display gate and
+    /// the abstain posture are unchanged.
     public static func estimateTempo(
         noteOnsets: [TimeInterval],
         configuration: Configuration = .default,
@@ -129,11 +142,20 @@ public enum TempoEstimator {
         }
         guard !iois.isEmpty else { return [] }
 
-        /// Fraction of IOIs consistent with `bpm` at the beat, double, or half level (±8% — wide
-        /// enough for human jitter, tight enough to reject near-miss tempi like 160 vs true 180).
+        /// Fraction of IOIs consistent with `bpm` at the beat, double, half, or quarter level
+        /// (±8% — wide enough for human jitter, tight enough to reject near-miss tempi like
+        /// 160 vs true 180). The quarter level (period/4) participates only when it clears
+        /// `microIoiFloor` (2026-08-06, with the octave-disambiguation fix): a felt tempo's
+        /// sixteenth grid is real pulse evidence — "6 Human" carries ~47% of its IOI mass
+        /// there — but only for hypotheses slow enough that period/4 is musically plausible.
+        /// The denominator stays ALL collapsed IOIs, so the confidence scale the consumer's
+        /// 0.3 display gate was calibrated to is unchanged.
         func consistency(_ bpm: Double) -> Double {
             let period: Double = 60.0 / bpm
-            let levels: [Double] = [period, period * 2.0, period * 0.5]
+            var levels: [Double] = [period, period * 2.0, period * 0.5]
+            if period * 0.25 >= microIoiFloor {
+                levels.append(period * 0.25)
+            }
             var matched = 0
             for ioi in iois {
                 for level in levels where abs(ioi - level) <= 0.08 * level {
@@ -153,14 +175,198 @@ public enum TempoEstimator {
         }
         scored = Array(scored.prefix(configuration.maxCandidates))
 
-        let primaryBpm = scored.first!.bpm
-        return scored.enumerated().map { idx, entry in
+        // Octave disambiguation (2026-08-06): the consistency ranking cannot separate T from
+        // T/2 (their IOI level sets overlap), so the tie-break was silently the histogram's
+        // preference for the raw subdivision rate — the double-time error. Re-score the winner
+        // against its octave neighbors on evidence consistency CAN'T see: strong-weak
+        // alternation and the felt-tempo prior.
+        let rankedBpm = scored.first!.bpm
+        let winnerBpm = disambiguateOctave(
+            primaryBpm: rankedBpm,
+            iois: iois,
+            minBpm: Double(minBpm),
+            maxBpm: Double(maxBpm)
+        )
+
+        // Rebuild the candidate list around the disambiguated winner. If the winner already
+        // sits in the scored list (always true when nothing flipped; ±1.0 BPM absorbs the
+        // histogram's integer bins vs. an exact T/2 like 79.5), promote that entry; otherwise
+        // prepend the winner with its own freshly computed consistency. The displaced
+        // candidates stay visible (isHarmonic marks octave relatives) — consumers see both
+        // interpretations, ranked.
+        var entries: [(bpm: Double, consistency: Double)]
+        if let match = scored.first(where: { abs($0.bpm - winnerBpm) <= 1.0 }) {
+            entries = [(match.bpm, match.consistency)]
+                + scored.filter { $0.bpm != match.bpm }.map { ($0.bpm, $0.consistency) }
+        } else {
+            entries = [(winnerBpm, consistency(winnerBpm))]
+                + scored.map { ($0.bpm, $0.consistency) }
+        }
+        entries = Array(entries.prefix(configuration.maxCandidates))
+
+        let primaryBpm = entries.first!.bpm
+        return entries.enumerated().map { idx, entry in
             let isHarmonic = idx > 0 && (
                 abs(entry.bpm - primaryBpm * 2.0) < 1.5
                 || abs(entry.bpm - primaryBpm * 0.5) < 1.5
             )
             return TempoEstimate(bpm: entry.bpm, confidence: entry.consistency, isHarmonic: isHarmonic)
         }
+    }
+
+    // MARK: - Octave disambiguation (2026-08-06)
+
+    /// Choose between a winning tempo `T` and its octave neighbors `T/2` and `2T` — the
+    /// standard MIR metrical-level problem. Field case: "6 Human" (felt ~80 BPM) read 159,
+    /// the 2x harmonic of ~79.5, because its onsets are mostly eighth-note subdivisions and
+    /// nothing downstream of the histogram ever asked whether the detected rate was the beat
+    /// or the beat's subdivision.
+    ///
+    /// Each in-range hypothesis is scored `combSupport × beatPlausibility × perceptualPrior`
+    /// (see `octaveScore`); the incumbent keeps ties, so a flip needs strictly better
+    /// evidence. Returns the winning BPM unchanged in scale (e.g. 159 → 79.5, not re-binned).
+    /// Internal for tests.
+    static func disambiguateOctave(
+        primaryBpm: Double,
+        iois: [TimeInterval],
+        minBpm: Double,
+        maxBpm: Double
+    ) -> Double {
+        guard !iois.isEmpty else { return primaryBpm }
+        var best = (bpm: primaryBpm, score: octaveScore(bpm: primaryBpm, iois: iois))
+        for ratio in [0.5, 2.0] {
+            let candidate = primaryBpm * ratio
+            guard candidate >= minBpm, candidate <= maxBpm else { continue }
+            let score = octaveScore(bpm: candidate, iois: iois)
+            if score > best.score {
+                best = (bpm: candidate, score: score)
+            }
+        }
+        return best.bpm
+    }
+
+    /// IOIs shorter than this (>~428 BPM as a rate) are not pulse evidence for ANY felt
+    /// tempo in the estimator's 40–200 range — the fastest musical sixteenth in range is
+    /// 0.15s (200 BPM). Below the floor lives grace-note ornament, strum residue that
+    /// escaped the 50ms cluster window, and Basic Pitch clutter on dense mixes ("6 Human"
+    /// measured ~32% of its collapsed IOIs down there). The floor is applied SYMMETRICALLY
+    /// (same filtered population for every hypothesis), and it also gates which hypotheses
+    /// get a period/4 comb level: period/4 ≥ 0.14 ⇔ bpm ≤ ~107 — deep lattices belong to
+    /// slow felt tempos; a fast hypothesis's "sixteenths" are sub-musical.
+    static let microIoiFloor: TimeInterval = 0.14
+
+    /// Weight of a subdivision-level IOI (period/2 or period/4) relative to a beat-level
+    /// hit (1.0). The old implicit convention (0.5) double-counted a speed bias: the
+    /// explicit perceptual prior ALREADY encodes "an ambiguous grid probably belongs to
+    /// the slower felt tempo", so the comb itself should not lean as hard toward reading
+    /// every grid as its own beat. 0.65 was tuned on the "6 Human" field case
+    /// (2026-08-06) inside hard invariant bounds proven by the synthetic tests: it must
+    /// stay BELOW prior(160)/prior(80) ≈ 0.777, or a dead-even 160 BPM beat train would
+    /// flip to 80 on the prior alone.
+    static let subdivisionBaseWeight: Double = 0.65
+
+    /// Evidence score for one octave hypothesis, from collapsed IOIs alone.
+    ///
+    /// `combSupport` — how well the IOI comb supports this BPM as the BEAT, over the
+    /// micro-floor-filtered population (see `microIoiFloor`):
+    /// - IOI ≈ beat period → 1.0 (a beat-to-beat gap: direct, unshared evidence).
+    /// - IOI ≈ half period → `subdivisionBaseWeight`, upgraded toward 1.0 by subdivision
+    ///   ALTERNATION (below): even subdivisions are ambiguous (could be the beat of the
+    ///   double tempo), but long-short alternating subdivisions are the signature of a
+    ///   felt beat ABOVE them — swung/uneven eighths. This is the times-only proxy for
+    ///   "onsets alternate strong-weak; every other onset is the real beat" (the
+    ///   doubled-detection signature).
+    /// - IOI ≈ quarter period (only when ≥ `microIoiFloor`) → `subdivisionBaseWeight`:
+    ///   the felt tempo's sixteenth grid. This level is what lets a subdivision-dominated
+    ///   take ("6 Human": ~47% of IOI mass at its felt-80 sixteenth) be claimed by the
+    ///   felt tempo at all — the same mass reads as period/2 for the doubled hypothesis
+    ///   and period/4 here, at EQUAL weight, so shared evidence cancels and the unshared
+    ///   evidence plus the prior decide.
+    /// - IOI ≈ double period → 0.5 (a skipped beat: real comb support, weaker than direct).
+    ///
+    /// `beatPlausibility` — mild penalty (×(1 − 0.25·A)) when this hypothesis's own
+    /// beat-level IOIs alternate long-short: beats don't systematically alternate; a
+    /// "beat" that swings is almost certainly a subdivision, so the hypothesis a level
+    /// down should win. 0.25 keeps it a nudge, not a veto.
+    ///
+    /// `perceptualPrior` — gentle log-Gaussian on felt tempo (musicological standard:
+    /// felt tempo concentrates in 60–120 BPM; Parncutt 1994-style resonance). Centered
+    /// 95 BPM, σ = 1 octave: at 140 BPM the weight is still ≈0.86, so a genuinely fast
+    /// song keeps winning on comb evidence — this is deliberately NOT a clamp. It only
+    /// decides when comb evidence is close (e.g. eighths at 159 vs. the felt 79.5).
+    /// Internal for tests.
+    static func octaveScore(bpm: Double, iois: [TimeInterval], tolerance: Double = 0.08) -> Double {
+        let population = iois.filter { $0 >= microIoiFloor }
+        guard !population.isEmpty else { return 0 }
+        let period = 60.0 / bpm
+        let subdivisionAlternation = alternationStrength(iois: population, period: period / 2, tolerance: tolerance)
+        let beatAlternation = alternationStrength(iois: population, period: period, tolerance: tolerance)
+        let halfWeight = subdivisionBaseWeight + (1.0 - subdivisionBaseWeight) * subdivisionAlternation
+        let quarterLevelActive = period * 0.25 >= microIoiFloor
+
+        var support = 0.0
+        for ioi in population {
+            if abs(ioi - period) <= tolerance * period {
+                support += 1.0
+            } else if abs(ioi - period / 2) <= tolerance * (period / 2) {
+                support += halfWeight
+            } else if quarterLevelActive, abs(ioi - period / 4) <= tolerance * (period / 4) {
+                support += subdivisionBaseWeight
+            } else if abs(ioi - period * 2) <= tolerance * (period * 2) {
+                support += 0.5
+            }
+        }
+        let combSupport = support / Double(population.count)
+        let beatPlausibility = 1.0 - 0.25 * beatAlternation
+        return combSupport * beatPlausibility * perceptualPrior(bpm)
+    }
+
+    /// Gentle log-Gaussian felt-tempo prior. Center 95 BPM (the 60–120 felt-tempo band's
+    /// log-center-ish), σ = 1 octave — wide enough that real fast/slow songs win on
+    /// evidence: prior(140) ≈ 0.86, prior(160) ≈ 0.75, prior(80) ≈ 0.97. Never a clamp.
+    /// Internal for tests.
+    static func perceptualPrior(_ bpm: Double, center: Double = 95.0, sigmaOctaves: Double = 1.0) -> Double {
+        guard bpm > 0 else { return 0 }
+        let octaves = log2(bpm / center) / sigmaOctaves
+        return exp(-0.5 * octaves * octaves)
+    }
+
+    /// Strength of long-short ALTERNATION among consecutive IOIs near `period`, in [0, 1].
+    ///
+    /// Measures the negative lag-1 autocorrelation of deviations from the matched IOIs' own
+    /// mean: swung eighths (long, short, long, short…) → deviations alternate sign → ≈1;
+    /// random human jitter → ≈0; a perfectly even train → zero variance → 0 (deliberate:
+    /// an even train carries NO alternation evidence, so a genuine fast tempo is never
+    /// demoted by this signal — only demonstrably uneven subdivisions are).
+    ///
+    /// Guards: ≥ 5 matched IOIs and ≥ 4 consecutive matched pairs before claiming anything
+    /// (alternation from a handful of intervals is noise); variance ≥ 1e-9 s² rejects
+    /// numerically-degenerate even trains.
+    /// Internal for tests.
+    static func alternationStrength(iois: [TimeInterval], period: Double, tolerance: Double = 0.08) -> Double {
+        guard period > 0 else { return 0 }
+        let tol = tolerance * period
+        let matched = iois.indices.filter { abs(iois[$0] - period) <= tol }
+        guard matched.count >= 5 else { return 0 }
+
+        // Deviations are taken from the matched IOIs' own mean, not from `period`: the true
+        // tempo rarely sits exactly on the hypothesis's (integer-binned) period, and a mean
+        // offset would bias every deviation the same way, masking the alternation.
+        let mean = matched.reduce(0.0) { $0 + iois[$1] } / Double(matched.count)
+
+        let matchedSet = Set(matched)
+        var crossSum = 0.0
+        var squareSum = 0.0
+        var pairCount = 0
+        for i in matched where matchedSet.contains(i + 1) {
+            let e0 = iois[i] - mean
+            let e1 = iois[i + 1] - mean
+            crossSum += e0 * e1
+            squareSum += e0 * e0
+            pairCount += 1
+        }
+        guard pairCount >= 4, squareSum > 1e-9 else { return 0 }
+        return min(1.0, max(0.0, -crossSum / squareSum))
     }
 
     /// Collapse onsets that fall within `window` of the previous kept event into one (keeping

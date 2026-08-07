@@ -249,11 +249,14 @@ final class TempoEstimatorTests: XCTestCase {
         }
         let estimates = TempoEstimator.estimateTempo(noteOnsets: onsets)
         XCTAssertFalse(estimates.isEmpty)
-        // Eighth-note events vote 180 with a half-weight 90 octave — either is acceptable
-        // evidence; assert the primary is one of the pair, not a sub-beat lock.
-        let primary = estimates[0].bpm
-        XCTAssertTrue(abs(primary - 180) < 6 || abs(primary - 90) < 6,
-                      "Jittered eighths at 90 must land on 90 or its 2x, not a sub-beat; got \(estimates)")
+        // TIGHTENED 2026-08-06 with the octave-disambiguation fix: the original assertion
+        // accepted 90 OR its 2x 180 ("either is acceptable evidence"), which partly encoded
+        // the double-time failure mode as expected behavior. With disambiguation the felt
+        // register must win — this jitter pattern's deviations are alternation-heavy, the
+        // signature of subdivisions under a slower felt beat — so eighth-note events at 90
+        // now read ~90 (the 180 subdivision rate survives only as a harmonic candidate).
+        XCTAssertEqual(estimates[0].bpm, 90, accuracy: 6,
+                       "Jittered eighths at 90 must read the felt 90, not the 180 subdivision rate; got \(estimates)")
         XCTAssertGreaterThan(estimates[0].confidence, 0.6, "A real (if human) pulse reads mid-high consistency; got \(estimates)")
     }
 
@@ -265,5 +268,93 @@ final class TempoEstimatorTests: XCTestCase {
     func testCollapseClustersKeepsFirstOfEachGesture() {
         let collapsed = TempoEstimator.collapseClusters([0, 0.012, 0.024, 0.6, 0.611, 1.2], window: 0.05)
         XCTAssertEqual(collapsed, [0, 0.6, 1.2])
+    }
+
+    // MARK: - Octave disambiguation (2026-08-06, the "6 Human" double-time fix)
+
+    /// The swung-eighths fixture: 80 BPM (beat = 0.75s), strong onsets ON the beat, weak
+    /// onsets 0.3797s after — IOIs alternate 0.3797/0.3703 (±1.25% swing around the 0.375
+    /// subdivision). Shared by the two tests below.
+    private func swungEightyOnsets() -> [TimeInterval] {
+        var onsets: [TimeInterval] = []
+        for beat in 0..<20 {
+            let t = Double(beat) * 0.75
+            onsets.append(t)            // strong (on the beat)
+            onsets.append(t + 0.3797)   // weak (swung "and")
+        }
+        return onsets
+    }
+
+    func testSwungEighthsAtEightyReadEightyNotOneSixty() {
+        // Pre-fix this fixture read EXACTLY 160 BPM: the smoothed histogram merged the two
+        // IOI clusters (bins 158 + 162) into a 160 peak, IOI consistency tied between 160
+        // and 80 (their level sets overlap — the structural blind spot), and the tie-break
+        // fell to the histogram's preference for the raw subdivision rate. The long-short
+        // alternation is precisely the strong-weak doubled-detection signature that octave
+        // disambiguation exists to catch ("6 Human": felt ~80, detected 159).
+        let estimates = TempoEstimator.estimateTempo(noteOnsets: swungEightyOnsets())
+        XCTAssertFalse(estimates.isEmpty)
+        XCTAssertEqual(estimates[0].bpm, 80, accuracy: 3,
+                       "Swung eighths at 80 must read the felt 80, not the 160 subdivision rate; got \(estimates)")
+        XCTAssertGreaterThan(estimates[0].confidence, 0.9,
+                             "Every IOI agrees with the 80 BPM comb — confidence stays on the consistency scale; got \(estimates)")
+    }
+
+    func testDisambiguationKeepsDoubleTimeAsHarmonicCandidate() {
+        // After a flip, the displaced double-time reading stays in the candidate list and is
+        // marked harmonic — consumers see both interpretations, ranked.
+        let estimates = TempoEstimator.estimateTempo(noteOnsets: swungEightyOnsets())
+        XCTAssertGreaterThanOrEqual(estimates.count, 2)
+        XCTAssertEqual(estimates[1].bpm, 160, accuracy: 3,
+                       "The displaced 160 reading should remain as the second candidate; got \(estimates)")
+        XCTAssertTrue(estimates[1].isHarmonic, "160 is the 2x octave of the 80 primary; got \(estimates)")
+    }
+
+    func testGenuineOneSixtyEvenTrainStaysOneSixty() {
+        // A dead-even 160 BPM train (0.375s IOIs) carries NO alternation evidence, so the
+        // gentle felt-tempo prior alone must not drag it down to 80: direct beat evidence
+        // (comb 1.0 at 160 vs subdivision-only 0.5 at 80) outweighs the prior's lean.
+        // Hard requirement of the fix — the prior is a nudge for ambiguous material,
+        // never a clamp.
+        let onsets = (0..<40).map { Double($0) * 0.375 }
+        let estimates = TempoEstimator.estimateTempo(noteOnsets: onsets)
+        XCTAssertFalse(estimates.isEmpty)
+        XCTAssertEqual(estimates[0].bpm, 160, accuracy: 3,
+                       "An even 160 train is genuinely 160; got \(estimates)")
+        XCTAssertGreaterThan(estimates[0].confidence, 0.9)
+    }
+
+    func testConfidentOneFortyNotDraggedDownByPrior() {
+        // 140 BPM even quarters: the prior mildly favors 70 (≈0.91 vs ≈0.86) but 140's
+        // direct beat evidence must win — a real 140 BPM song still reads 140.
+        let onsets = (0..<40).map { Double($0) * (60.0 / 140.0) }
+        let estimates = TempoEstimator.estimateTempo(noteOnsets: onsets)
+        XCTAssertFalse(estimates.isEmpty)
+        XCTAssertEqual(estimates[0].bpm, 140, accuracy: 3,
+                       "A confident 140 must survive the perceptual prior; got \(estimates)")
+        XCTAssertGreaterThan(estimates[0].confidence, 0.9)
+    }
+
+    func testAlternationStrengthSignatures() {
+        // Swung eighths (long-short) → ≈1; even train → 0 (zero variance is deliberately
+        // NOT alternation — a genuine fast tempo must never be demoted by an even train);
+        // too few matched intervals → 0 (no claim from a handful of IOIs).
+        let swung: [TimeInterval] = (0..<20).map { $0 % 2 == 0 ? 0.3797 : 0.3703 }
+        XCTAssertGreaterThan(TempoEstimator.alternationStrength(iois: swung, period: 0.375), 0.9)
+
+        let even: [TimeInterval] = Array(repeating: 0.375, count: 20)
+        XCTAssertEqual(TempoEstimator.alternationStrength(iois: even, period: 0.375), 0)
+
+        let few: [TimeInterval] = [0.3797, 0.3703, 0.3797, 0.3703]
+        XCTAssertEqual(TempoEstimator.alternationStrength(iois: few, period: 0.375), 0)
+    }
+
+    func testPerceptualPriorIsGentle() {
+        // The prior's shape is load-bearing: near-flat across the felt band, mild at the
+        // edges — documented values the disambiguation margins were designed against.
+        XCTAssertEqual(TempoEstimator.perceptualPrior(95), 1.0, accuracy: 0.001)
+        XCTAssertGreaterThan(TempoEstimator.perceptualPrior(140), 0.85)
+        XCTAssertGreaterThan(TempoEstimator.perceptualPrior(160), 0.74)
+        XCTAssertGreaterThan(TempoEstimator.perceptualPrior(80), 0.95)
     }
 }
