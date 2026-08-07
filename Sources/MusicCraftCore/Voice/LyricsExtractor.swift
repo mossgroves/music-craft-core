@@ -219,50 +219,83 @@ public enum LyricsExtractor {
 
     /// Convert the mono Float32 `[Float]` buffer at `sampleRate` into the transcriber's required format,
     /// wrapped as `AnalyzerInput`(s). No conversion when the formats already match.
+    /// Seconds per AnalyzerInput chunk. WHY CHUNKING EXISTS (2026-08-08, the "6 Human"
+    /// isolation spike's real finding): SpeechAnalyzer fed ONE giant AnalyzerInput only
+    /// emits results for roughly the LAST ~140–155 seconds of it — a 4:39 song lost its
+    /// entire first 2:18 of sung words (first token 2:18.12), which rendered as the
+    /// Songcatcher chart's missing-verse hole. Measured head-cut probes: 138s/160s inputs
+    /// lose nothing; 200s loses ~60s; 278.8s loses ~138s. Chunked 10s inputs through one
+    /// analyzer session transcribe the same file end to end (first token 0:13.08, 185 vs
+    /// 87 tokens, the whole verse recovered). 10s is the spike-validated value.
+    private static let analyzerChunkSeconds: Double = 10
+
     @available(iOS 26, macOS 26, *)
     private static func makeAnalyzerInputs(
         buffer: [Float],
         sampleRate: Double,
         targetFormat: AVAudioFormat
     ) throws -> [AnalyzerInput] {
-        guard let sourceFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false),
-              let sourceBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: AVAudioFrameCount(max(1, buffer.count))) else {
+        guard let sourceFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false) else {
             throw SpeechFrameworkError.frameworkUnavailable
         }
-        sourceBuffer.frameLength = AVAudioFrameCount(buffer.count)
-        buffer.withUnsafeBufferPointer { ptr in
-            if let base = ptr.baseAddress, let dst = sourceBuffer.floatChannelData?[0] {
-                dst.update(from: base, count: buffer.count)
+        // One converter reused across chunks (stream-style: .noDataNow between chunks, so
+        // its internal state carries over and resampling stays continuous at chunk seams).
+        let needsConversion = sourceFormat != targetFormat
+        let converter: AVAudioConverter?
+        if needsConversion {
+            guard let c = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
+                throw SpeechFrameworkError.frameworkUnavailable
             }
-        }
-
-        if sourceFormat == targetFormat {
-            return [AnalyzerInput(buffer: sourceBuffer)]
-        }
-
-        guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
-            throw SpeechFrameworkError.frameworkUnavailable
+            converter = c
+        } else {
+            converter = nil
         }
         let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
-        let capacity = AVAudioFrameCount(Double(buffer.count) * ratio) + 4096
-        guard let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: max(1, capacity)) else {
-            throw SpeechFrameworkError.frameworkUnavailable
-        }
-        var providedInput = false
-        var conversionError: NSError?
-        converter.convert(to: outBuffer, error: &conversionError) { _, inputStatus in
-            if providedInput {
-                inputStatus.pointee = .endOfStream
-                return nil
+
+        let chunkFrames = max(1, Int(analyzerChunkSeconds * sampleRate))
+        var inputs: [AnalyzerInput] = []
+        var offset = 0
+        while offset < buffer.count {
+            let end = min(offset + chunkFrames, buffer.count)
+            let count = end - offset
+            guard let sourceBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: AVAudioFrameCount(count)) else {
+                throw SpeechFrameworkError.frameworkUnavailable
             }
-            providedInput = true
-            inputStatus.pointee = .haveData
-            return sourceBuffer
+            sourceBuffer.frameLength = AVAudioFrameCount(count)
+            buffer.withUnsafeBufferPointer { ptr in
+                if let base = ptr.baseAddress, let dst = sourceBuffer.floatChannelData?[0] {
+                    dst.update(from: base + offset, count: count)
+                }
+            }
+
+            if let converter {
+                let capacity = AVAudioFrameCount(Double(count) * ratio) + 4096
+                guard let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: max(1, capacity)) else {
+                    throw SpeechFrameworkError.frameworkUnavailable
+                }
+                var providedInput = false
+                var conversionError: NSError?
+                converter.convert(to: outBuffer, error: &conversionError) { _, inputStatus in
+                    if providedInput {
+                        // .noDataNow, NOT .endOfStream: the converter is reused for the next
+                        // chunk, so the stream must stay open across calls.
+                        inputStatus.pointee = .noDataNow
+                        return nil
+                    }
+                    providedInput = true
+                    inputStatus.pointee = .haveData
+                    return sourceBuffer
+                }
+                if let conversionError {
+                    throw SpeechFrameworkError.recognitionFailed(conversionError.localizedDescription)
+                }
+                inputs.append(AnalyzerInput(buffer: outBuffer))
+            } else {
+                inputs.append(AnalyzerInput(buffer: sourceBuffer))
+            }
+            offset = end
         }
-        if let conversionError {
-            throw SpeechFrameworkError.recognitionFailed(conversionError.localizedDescription)
-        }
-        return [AnalyzerInput(buffer: outBuffer)]
+        return inputs
     }
 
     /// Configuration for iOS 26+ SpeechAnalyzer. Ignored on iOS 17 SFSpeechRecognizer (forward-compatible).
