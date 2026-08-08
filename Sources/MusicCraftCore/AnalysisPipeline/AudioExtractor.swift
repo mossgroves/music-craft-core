@@ -90,8 +90,36 @@ public enum AudioExtractor {
 
     /// Note-native chord segments from full polyphony: 1.0 s window / 0.5 s hop (single window if the
     /// clip is shorter than one window), each window weighted by `overlapSeconds × velocity` per pitch
-    /// class with the lowest sounding note as bass, named by `NoteChordIdentifier`. Consecutive identical
-    /// names collapse into contiguous, non-overlapping `ChordSegment`s.
+    /// class with the lowest sounding note as bass.
+    ///
+    /// **0.1.7 — sequence-decoded labeling (the 2026-08-07 ceiling-analysis fixes).** Windows are no
+    /// longer labeled independently (per-window argmax made one melody-contaminated window its own
+    /// segment — the "6 Human" chord-per-word churn and Am↔A / Em↔E quality flips). Instead:
+    ///
+    ///  1. `NoteChordIdentifier.candidateScores` produces each window's FULL candidate score vector;
+    ///  2. `ChordSequenceDecoder.decode` Viterbi-decodes the window sequence with a
+    ///     self-transition-favoring switch penalty (the literature's single biggest chord lever), so a
+    ///     momentary contamination is absorbed while sustained real changes still win;
+    ///  3. the **bare-dyad guard** (`bareDyadGuarded`) renames a decoded major/minor run to the power
+    ///     chord ("E5") when NONE of its windows carries a sounding third AND the take has other
+    ///     chords to judge it against — a standalone fifth dyad no longer asserts MAJOR (the
+    ///     phantom-E killer). A dyad window absorbed INTO a neighboring chord's run keeps that context
+    ///     label — deferring to context is the guard's other honest outcome;
+    ///  4. once a key is inferred from the decoded progression (chord-based only — a key needs a
+    ///     progression to be trustworthy), a SECOND decode runs with a small non-diatonic penalty
+    ///     (harmonic-minor V scored quasi-diatonic), so an artifact A-major inside A minor needs
+    ///     genuine C♯ evidence while a real harmonic-minor E survives.
+    ///
+    /// The 0.1.1 `cleanupRuns` passes (edge trim + identical-flank flicker absorb) still run on the
+    /// decoded runs — Viterbi supersedes the *generalized* short-run absorption that was considered
+    /// for 9.4 (that idea stays OUT; the decode is the principled version of it), but the shipped
+    /// conservative cleanup remains valid on the decoder's output.
+    ///
+    /// **Neutral on single-chord material by construction**, which the labeled bench requires: when
+    /// every window argmaxes the same candidate the decode changes nothing, one run means no second
+    /// pass (no progression → no key) and no dyad guard (sole runs are exempt). Verified 2026-08-08
+    /// against a pristine-HEAD worktree — GADA 100.0/100.0 and TaylorNylon 99.1/99.1 root/exact on
+    /// both, same single C→A confusion.
     private static func noteNativeChordSegments(notes: [TranscribedNote], duration: TimeInterval) -> [ChordSegment] {
         guard !notes.isEmpty, duration > 0 else { return [] }
         let windowLen = 1.0, hop = 0.5
@@ -100,45 +128,163 @@ public enum AudioExtractor {
         if duration <= windowLen { starts = [0] }
         else { var s = 0.0; while s < duration { starts.append(s); s += hop } }
 
-        // Per-window identified chord (nil where none), with its [start, end] and confidence.
-        var win: [(start: Double, chord: Chord?, conf: Double)] = []
+        // Per-window weighted pitch-class histogram + bass (the evidence; unchanged from 0.1.0).
+        var bins: [[Double]] = []
+        var basses: [Int?] = []
         for s in starts {
             let e = min(s + windowLen, duration)
-            var bins = [Double](repeating: 0, count: 12)
+            var b = [Double](repeating: 0, count: 12)
             var lowest = Int.max
             for n in notes {
                 let overlap = max(0, min(n.onsetTime + n.duration, e) - max(n.onsetTime, s))
                 guard overlap > 0 else { continue }
-                bins[((n.pitchMIDI % 12) + 12) % 12] += overlap * max(0, n.velocity)
+                b[((n.pitchMIDI % 12) + 12) % 12] += overlap * max(0, n.velocity)
                 if n.pitchMIDI < lowest { lowest = n.pitchMIDI }
             }
-            let bass = lowest == Int.max ? nil : ((lowest % 12) + 12) % 12
-            let id = NoteChordIdentifier.identify(weightedPitchClasses: bins, bassPitchClass: bass)
-            win.append((s, id?.chord, id?.confidence ?? 0))
+            bins.append(b)
+            basses.append(lowest == Int.max ? nil : ((lowest % 12) + 12) % 12)
         }
 
-        // Collapse consecutive identical chord names into runs (start + mean confidence).
-        var runs: [(start: Double, chord: Chord, conf: Double)] = []
+        // Full candidate score vector per window (nil where the window has no usable content —
+        // decode stretches never claim continuity across those).
+        let scoreVectors: [[Double]?] = (0..<starts.count).map {
+            NoteChordIdentifier.candidateScores(weightedPitchClasses: bins[$0], bassPitchClass: basses[$0])
+        }
+
+        // FIRST PASS — context decode, runs, dyad guard, conservative cleanup.
+        let labels1 = ChordSequenceDecoder.decode(windows: scoreVectors)
+        let runs1 = decodedRuns(labels: labels1, scoreVectors: scoreVectors,
+                                bins: bins, basses: basses, starts: starts, duration: duration)
+        let firstSegments = finalizeSegments(runs: runs1, duration: duration)
+
+        // SECOND PASS — key-aware prior, only when the decoded progression itself supports a key
+        // (≥2 distinct chords → ProgressionAnalyzer). A melody-fallback key is not evidence enough
+        // to re-bias chord naming (and single-chord bench fixtures stay structurally exempt).
+        guard let key = chordBasedKey(from: firstSegments) else { return firstSegments }
+        let labels2 = ChordSequenceDecoder.decode(
+            windows: scoreVectors,
+            candidatePenalty: ChordSequenceDecoder.nonDiatonicPenalty(for: key))
+        if labels2 == labels1 { return firstSegments }
+        let runs2 = decodedRuns(labels: labels2, scoreVectors: scoreVectors,
+                                bins: bins, basses: basses, starts: starts, duration: duration)
+        return finalizeSegments(runs: runs2, duration: duration)
+    }
+
+    /// Decoded window labels → cleaned chord runs: build per-window chords, collapse identical
+    /// consecutive names into runs (tracking each run's window range), apply the bare-dyad guard at
+    /// run level, then the 0.1.1 conservative cleanup (edge trim + identical-flank flicker absorb).
+    private static func decodedRuns(labels: [Int?], scoreVectors: [[Double]?],
+                                    bins: [[Double]], basses: [Int?],
+                                    starts: [Double], duration: TimeInterval)
+        -> [(start: Double, chord: Chord, conf: Double)] {
+        // Per-window chord from the decoded candidate (conf = that window's clamped candidate score,
+        // matching identify's confidence semantics).
+        var win: [(start: Double, chord: Chord?, conf: Double)] = []
+        for (i, label) in labels.enumerated() {
+            guard let label, let vec = scoreVectors[i],
+                  let cand = NoteChordIdentifier.candidate(at: label) else {
+                win.append((starts[i], nil, 0)); continue
+            }
+            let conf = min(1.0, max(0.0, vec[label]))
+            let chordNotes = cand.quality.intervals.compactMap { NoteName(rawValue: (cand.root.rawValue + $0) % 12) }
+            win.append((starts[i], Chord(root: cand.root, quality: cand.quality, confidence: conf, notes: chordNotes), conf))
+        }
+
+        // Collapse consecutive identical chord names into runs, remembering the window range so the
+        // dyad guard can ask "did ANY window of this run actually sound a third?".
+        var runs: [(start: Double, chord: Chord, conf: Double, windows: ClosedRange<Int>)] = []
         var i = 0
         while i < win.count {
             guard let chord = win[i].chord else { i += 1; continue }
             var j = i
             while j + 1 < win.count, let next = win[j + 1].chord, next.displayName == chord.displayName { j += 1 }
             let confs = win[i...j].map { $0.conf }
-            runs.append((win[i].start, chord, confs.reduce(0, +) / Double(confs.count)))
+            runs.append((win[i].start, chord, confs.reduce(0, +) / Double(confs.count), i...j))
             i = j + 1
         }
 
-        // Clean up pick-attack/release edge transients and same-root sus/added flicker (0.1.1).
-        runs = cleanupRuns(runs, duration: duration)
+        // Bare-dyad guard (run level) — see `bareDyadGuarded`.
+        let guarded = bareDyadGuarded(runs: runs, bins: bins, basses: basses)
 
-        // Assign contiguous, non-overlapping end times (next run's start, or duration for the last).
-        return runs.enumerated().map { (k, r) in
+        // Clean up pick-attack/release edge transients and same-root sus/added flicker (0.1.1).
+        // Its re-collapse also merges adjacent runs the guard may have renamed to one name.
+        return cleanupRuns(guarded, duration: duration)
+    }
+
+    /// **The bare-dyad guard (0.1.7).** A decoded major/minor run whose windows never sound EITHER
+    /// third is a bare root+fifth dyad wearing a deterministic default — major sorts first in
+    /// `NoteChordIdentifier.candidateQualities` and replacement is strictly-greater, so a fifth dyad
+    /// falls out as MAJOR on candidate ordering alone, not on evidence. Such a run is renamed to the
+    /// honest `.power` naming ("E5", not "E"): the phantom-standalone-E/A killer from the 2026-08-07
+    /// "6 Human" ceiling analysis (Sanctuary BACKLOG chord-ceiling evidence).
+    ///
+    /// **The guard needs context to be honest, so it never touches a SOLE run** — the same
+    /// conservative posture `cleanupRuns` takes ("never touches a sole run"). Measured 2026-08-08 on
+    /// the labeled TaylorNylon bench: four of the nineteen sustained G takes (G_015–G_018) transcribe
+    /// as a pure D+G dyad with NO B in any window, because Basic Pitch misses the third on a nylon
+    /// string with weak 3rd harmonics and sparse fingerpicked voicings — the standing instrument
+    /// constraint in Sanctuary's CLAUDE.md ("All audio analysis thresholds must work with this
+    /// instrument"). Ground truth on all four is G major, so an unconditional guard names them "G5"
+    /// and costs 3.7 points of bench exact accuracy (99.1% → 95.4%). When the take IS one chord there
+    /// is no context to judge a missing third against and a transcription miss is the likelier
+    /// explanation; when the run stands among OTHER chords — exactly the phantom's shape — the dyad
+    /// reading is the honest one. This is also why the guard lives here and not in
+    /// `NoteChordIdentifier.identify`: a single histogram carries no context to make the call with.
+    ///
+    /// A dyad window the decode absorbed INTO a flanking chord's run never reaches here as its own
+    /// run — context already named it, which is the guard's other honest outcome.
+    ///
+    /// Pure and internal so it is unit-testable without audio (`ChordSequenceDecoderTests`).
+    /// `bins[w]` / `basses[w]` are the window-`w` evidence the runs were decoded from.
+    static func bareDyadGuarded(runs: [(start: Double, chord: Chord, conf: Double, windows: ClosedRange<Int>)],
+                                bins: [[Double]], basses: [Int?])
+        -> [(start: Double, chord: Chord, conf: Double)] {
+        let plain = runs.map { (start: $0.start, chord: $0.chord, conf: $0.conf) }
+        guard runs.count >= 2 else { return plain }   // sole run: no context, never renamed
+
+        var guarded: [(start: Double, chord: Chord, conf: Double)] = []
+        for (k, r) in runs.enumerated() {
+            if r.chord.quality == .major || r.chord.quality == .minor {
+                let rootPC = r.chord.root.rawValue
+                let anyThird = r.windows.contains {
+                    NoteChordIdentifier.thirdPasses(root: rootPC, weightedPitchClasses: bins[$0])
+                }
+                if !anyThird {
+                    let scored = r.windows.compactMap {
+                        NoteChordIdentifier.powerChord(root: rootPC, weightedPitchClasses: bins[$0], bassPitchClass: basses[$0])
+                    }
+                    if let firstScored = scored.first {
+                        let meanConf = scored.map { $0.confidence }.reduce(0, +) / Double(scored.count)
+                        guarded.append((r.start, firstScored.chord, meanConf))
+                        continue
+                    }
+                }
+            }
+            guarded.append(plain[k])
+        }
+        return guarded
+    }
+
+    /// Contiguous, non-overlapping `ChordSegment`s from cleaned runs (next run's start, or duration
+    /// for the last, as the end time).
+    private static func finalizeSegments(runs: [(start: Double, chord: Chord, conf: Double)],
+                                         duration: TimeInterval) -> [ChordSegment] {
+        runs.enumerated().map { (k, r) in
             let end = k + 1 < runs.count ? runs[k + 1].start : duration
             // Reuse the existing `.classifier` DetectionMethod case — the enum is frozen for Sanctuary;
             // a dedicated `.noteNative` case is a later additive option.
             return ChordSegment(startTime: r.start, endTime: end, chord: r.chord, confidence: r.conf, detectionMethod: .classifier)
         }
+    }
+
+    /// Chord-based key only (the second decode pass's gate): ≥2 distinct decoded chords →
+    /// `ProgressionAnalyzer.inferKey`; nil otherwise. Mirrors `inferKey`'s first branch WITHOUT the
+    /// melody fallback — a fallback key isn't progression evidence and must not re-bias chord naming.
+    private static func chordBasedKey(from segments: [ChordSegment]) -> MusicalKey? {
+        guard segments.count >= 2 else { return nil }
+        let chords = segments.map { $0.chord }
+        guard Set(chords).count >= 2 else { return nil }
+        return ProgressionAnalyzer.inferKey(from: chords)
     }
 
     /// Note-native segment cleanup (0.1.1): trim weak pick-attack/release edge runs and absorb a single

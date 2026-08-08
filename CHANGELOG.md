@@ -5,6 +5,88 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-08-08
+
+### Changed — chord quality on real songs: Viterbi sequence decode + bare-dyad guard + key-aware prior
+
+The three measured chord-detection quality bugs from the 2026-08-07 ceiling analysis of a real song
+("6 Human", an A-minor loop; Sanctuary BACKLOG chord/ceiling evidence): (a) Am↔A / Em↔E quality
+flips — sung melody notes contaminate the per-window pitch-class histogram and the major/minor
+decision reduces to third-vs-third weight; (b) chord-per-word churn — every 0.5 s-hop window was
+labeled independently, so one contaminated window became its own segment (and `cleanupRuns`' flicker
+rule requires identical flanks, so "Am A Em G" survived); (c) phantom standalone E/A majors — a bare
+fifth dyad deterministically named MAJOR (candidate ordering + strictly-greater replacement).
+
+- **Viterbi sequence decode (new internal `ChordDetection/ChordSequenceDecoder`).**
+  `noteNativeChordSegments` no longer takes a per-window argmax: each window's FULL candidate score
+  vector (new additive API `NoteChordIdentifier.candidateScores` — 12 roots × 9 qualities = 108
+  candidates, plus public `candidateQualities` / `candidateCount` / `candidate(at:)` to interpret it)
+  is decoded as a SEQUENCE with a self-transition-favoring switch penalty (one tunable, 0.12 — the
+  literature's single biggest documented chord lever, Cho & Bello-class ≈+22 points). A momentary
+  contamination is absorbed into its neighbors' label; a sustained real change accumulates margin and
+  always wins. Windows with no usable content stay nil and split the decode (no continuity invented
+  across silence). Neutral by construction on single-chord material — when every window argmaxes the
+  same candidate the decode changes nothing.
+- **Bare-dyad guard (`AudioExtractor.bareDyadGuarded`).** A decoded major/minor run whose windows
+  never sound EITHER third is a bare root+fifth dyad wearing a deterministic default (major sorts
+  first in `candidateQualities`; replacement is strictly-greater), so it is renamed to the `.power`
+  naming — "E5", not "E". Kills the phantom standalone E/A majors. Two deliberate limits, both
+  evidence-driven:
+  - **It never touches a SOLE run** — the same posture `cleanupRuns` already takes. Measured
+    2026-08-08 on the labeled bench: four of the nineteen sustained TaylorNylon G takes
+    (G_015–G_018) transcribe as a pure D+G dyad with NO B in any window, because Basic Pitch misses
+    the third on nylon strings with weak 3rd harmonics and sparse fingerpicked voicings. Ground
+    truth on all four is G major, so an unconditional guard names them "G5" and costs 3.7 points of
+    bench exact accuracy (99.1% → 95.4%). With one chord and no context, a missing third is more
+    likely a transcription miss; among OTHER chords — the phantom's actual shape — the dyad reading
+    is the honest one.
+  - **`NoteChordIdentifier.identify` is UNCHANGED** and keeps naming a bare dyad by candidate
+    ordering. A single histogram carries no context to make this call with, which is precisely what
+    the four G takes demonstrate; the veto belongs at the run level or nowhere.
+  A dyad window the decode absorbed INTO a flanking chord's run never reaches the guard as its own
+  run — context already named it, which is the guard's other honest outcome.
+- **Key-aware second decode pass.** Once the decoded progression itself supports a key (chord-based
+  `ProgressionAnalyzer.inferKey` over ≥2 distinct chords — a melody-fallback key is not evidence
+  enough to re-bias chord naming), the windows are re-decoded with a small non-diatonic penalty
+  (0.08, the same magnitude class as the existing qualityPriors). The harmonic-minor V (E / E7 in
+  A minor) is scored quasi-diatonic so a REAL harmonic-minor E survives, while an artifact A-major
+  inside A minor now needs genuine C♯ evidence. Single-chord fixtures are structurally exempt (no
+  progression → no second pass).
+- **Decision noted:** the generalized short-run absorption considered for 9.4 (BACKLOG "residual
+  follow-on") stays OUT — the Viterbi decode is the principled version of it and supersedes it. The
+  shipped conservative 0.1.1 `cleanupRuns` passes (edge trim + identical-flank flicker absorb) still
+  run on the decoder's output.
+- Tests: +24. `ChordSequenceDecoderTests` (+22) covers decode absorption / neutrality /
+  genuine-change / loop / nil-split, the run-level dyad guard incl. sub-floor third,
+  one-third-bearing-window, non-triad runs and the sole-run exemption, and the key-prior asymmetry
+  incl. harmonic-minor V; `PublicAPITests` (+2) pins the new public candidate-space surface per the
+  Tier 2 release rule. Existing `NoteChordIdentifierTests` unchanged and green; `RealAudioChordTests`
+  thresholds unchanged and green. `musicCraftCoreVersion` → "0.1.7". Full suite: 409 executed,
+  18 skipped, 3 failures — the same 3 long-documented GuitarSet expected-failures, no new ones.
+- **Regression evidence (2026-08-08, measured against a pristine-HEAD worktree run of the same
+  fixtures on the same machine).** The labeled single-chord benches are byte-identical either side of
+  this change, on BOTH of the bench's two views:
+
+  | fixture | HEAD root/exact | 0.1.7 root/exact | confusions |
+  | --- | --- | --- | --- |
+  | GADA (32), integrated | 100.0 / 100.0 | 100.0 / 100.0 | none |
+  | GADA (32), note-native direct | 100.0 / 100.0 | 100.0 / 100.0 | none |
+  | TaylorNylon (109), integrated | 99.1 / 99.1 | 99.1 / 99.1 | C→A ×1 (both) |
+  | TaylorNylon (109), note-native direct | 99.1 / 99.1 | 99.1 / 99.1 | C→A ×1 (both) |
+
+  On the multi-chord GuitarSet set — the material this arc is actually for — progression mean CSR
+  moved 28.7% → 31.5% (deterministic: bit-identical across 6 working-tree runs and 3 HEAD runs). It
+  remains under its long-standing 50% threshold and stays a documented expected-failure; the point is
+  direction, not a passing gate. The count of expected failures is unchanged at 3.
+- **Known, pre-existing: `ProgressionAnalyzer.inferKey` has a nondeterministic tie-break.** Its
+  `scores.max(by:)` runs over a Dictionary, and Swift randomizes Dictionary iteration order per
+  process, so an exact tie between two candidate keys resolves differently run to run. 0.1.7 doesn't
+  introduce this but does expose it: one GuitarSet file's decoded progression now lands on such a tie,
+  so `GuitarSetKeyInferenceTests` reports 20.0% or 40.0% exact depending on the run (measured 4×20.0%
+  / 3×40.0% over seven runs of identical code; HEAD reports a stable 20.0% only because its chord list
+  doesn't tie). No accuracy claim is made for key inference in this release. The fix — a deterministic
+  tie-break — belongs to its own change with its own measurement, since it moves key results globally.
+
 ## [0.1.6] - 2026-08-07
 
 ### Added — WhisperKit sung-lyric transcription path in LyricsExtractor (Apple Speech fallback)

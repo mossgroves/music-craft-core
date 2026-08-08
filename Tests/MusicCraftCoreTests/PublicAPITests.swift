@@ -172,4 +172,47 @@ final class PublicAPITests: XCTestCase {
         XCTAssertNotNil(candidate)
         XCTAssertEqual(candidate.score, 0.95)
     }
+
+    // MARK: - NoteChordIdentifier Public API (0.1.7)
+
+    /// The candidate-space exposure added in 0.1.7 so a sequence decoder can pick chord labels in
+    /// context instead of per-window argmax. Consumers need all four members together — the score
+    /// vector plus the three accessors that interpret its layout — so they are pinned here as one
+    /// public contract.
+    func testNoteChordIdentifierCandidateSpacePublicAPI() {
+        // The quality axis and its length are the vector's layout contract.
+        XCTAssertEqual(NoteChordIdentifier.candidateCount, 12 * NoteChordIdentifier.candidateQualities.count)
+        XCTAssertTrue(NoteChordIdentifier.candidateQualities.contains(.major))
+        XCTAssertTrue(NoteChordIdentifier.candidateQualities.contains(.minor))
+
+        // Index decomposition: root * qualityCount + qualityIndex, roots ascending from C.
+        let first = NoteChordIdentifier.candidate(at: 0)
+        XCTAssertEqual(first?.root, .C)
+        XCTAssertEqual(first?.quality, NoteChordIdentifier.candidateQualities.first)
+        XCTAssertNil(NoteChordIdentifier.candidate(at: -1))
+        XCTAssertNil(NoteChordIdentifier.candidate(at: NoteChordIdentifier.candidateCount))
+    }
+
+    func testNoteChordIdentifierCandidateScoresPublicAPI() {
+        // A clean Am histogram (A, C, E at equal weight), bass A.
+        var histogram = [Double](repeating: 0, count: 12)
+        for pc in [9, 0, 4] { histogram[pc] = 1.0 }
+
+        guard let scores = NoteChordIdentifier.candidateScores(weightedPitchClasses: histogram, bassPitchClass: 9) else {
+            return XCTFail("expected a score vector for a usable histogram")
+        }
+        XCTAssertEqual(scores.count, NoteChordIdentifier.candidateCount)
+
+        // The vector's argmax must agree with the public `identify` it was factored out of.
+        var best = 0
+        for i in 1..<scores.count where scores[i] > scores[best] { best = i }
+        let winner = NoteChordIdentifier.candidate(at: best)
+        let identified = NoteChordIdentifier.identify(weightedPitchClasses: histogram, bassPitchClass: 9)
+        XCTAssertEqual(winner?.root, identified?.chord.root)
+        XCTAssertEqual(winner?.quality, identified?.chord.quality)
+
+        // Same nil contract as `identify`: no usable harmonic content, no vector.
+        XCTAssertNil(NoteChordIdentifier.candidateScores(weightedPitchClasses: [Double](repeating: 0, count: 12),
+                                                         bassPitchClass: nil))
+    }
 }
