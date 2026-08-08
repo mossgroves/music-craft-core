@@ -5,11 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.6] - 2026-08-07
+
+### Added — WhisperKit sung-lyric transcription path in LyricsExtractor (Apple Speech fallback)
+- **`LyricsExtractor.Configuration.whisperModelFolder: URL?`** (default nil) — when the consuming app provides a folder holding a locally-managed WhisperKit CoreML model (validated variant: `openai_whisper-small`), English transcription runs through the new internal **`Voice/WhisperLyricsEngine`** (WhisperKit 1.1.0, new SPM dependency pinned `exact` — MIT); when nil, unloadable, non-English, or on ANY Whisper failure, the existing Apple SpeechAnalyzer / SFSpeechRecognizer path runs **unchanged** as the shipping fallback. Model download/placement/eviction stays app-side; MCC never fetches weights (`download: false`).
+- **The decode config is PINNED, measured** (Sanctuary BACKLOG "Lyric transcription", parity check + six-song on-device validation, 2026-08-07): WhisperKit defaults are unshippable on music (92.2% WER — music-bed windows greedy-sample `<|nocaptions|>`); the pinned rescue is `language "en"` + `usePrefillPrompt` + `skipSpecialTokens` + the OpenAI 82-token non-speech suppress list + no_speech `50362` + `firstTokenLogProbThreshold -100` + `wordTimestamps`, and **never any initial prompt** (a title prompt measured a 56.7%-WER repetition catastrophe). Token list copied verbatim from the WhisperBench harness (`BenchModel.nonSpeechSuppressTokens`, commit `73a1a36`).
+- **Measured artifact filter** (pure, unit-tested `WhisperLyricsEngine.filterArtifacts`): drops (1) ghost words below word-probability 0.15 (hallucinations over no-vocal regions measured at 0.03-0.19), (2) "Music"-only caption segments (instrumental intros/fades), (3) a trailing lone low-confidence token ending inside the last 30 s decode window (the measured "you"-tail fade-out artifact). Per-word `WordTiming {word, start, end, probability}` maps to `TranscribedToken {text, onsetTime, duration, confidence}`.
+- Tests: 13 pure-logic tests (mapping + filter + pinned-config guard) run in every suite pass; one real-inference integration test is gated behind `MCC_WHISPER_MODEL_DIR` / `MCC_WHISPER_AUDIO_FILE` (verified locally on this Mac: 10 s full-mix sung excerpt → 11 correct word tokens, offline model + tokenizer load). `musicCraftCoreVersion` → "0.1.6".
 
 ### Added
 
 - **Note-native tempo estimation** — `TempoEstimator.estimateTempo(noteOnsets:)` (2026-07-21). Tempo was the last subsystem still fed by the spectral-flux front-end, whose documented weakness on acoustic guitar (TASKS: all five GuitarSet fixtures locked to 1/3 of ground truth) left consumers with a mostly-abstaining tempo. The new path feeds Basic Pitch's note onsets — the same evidence the note-native chord/key/contour engine already trusts — into the existing TempoHistogram, with strum-cluster collapsing (onsets within 50ms = one gesture) and a `minEvents` abstention floor. **Confidence semantics fixed en route (the dead-axis root cause, measured by test):** the histogram's raw peak-mass share caps ≈0.22 on PERFECT metronomic input, so consumer gates calibrated to the beats path's regularity scale could never pass; the note path reports **IOI consistency** instead (fraction of intervals agreeing with the candidate at 1x/2x/0.5x within ±8%) and ranks candidates by it — steady playing reads ~1.0, rubato reads low, and near-miss/sub-beat peaks the raw histogram can rank first are demoted. +5 tests (steady quarters ≈1.0 confidence, strum-cluster collapse, jittered fingerpicking lands on the beat family, sparse abstains, cluster collapsing).
+
+### Also in this release (committed since 0.1.5; summarized from the commit log)
+
+- **fix(lyrics)** `ed9342e` — chunk `AnalyzerInput`s at 10 s: SpeechAnalyzer fed one giant input only emits the LAST ~150 s (a 4:39 song lost its whole first verse); chunked inputs through one analyzer session transcribe end to end.
+- **fix(tempo)** `4627922` — octave disambiguation: the felt tempo beats its double.
+- **feat(key)** `e0afaab` — structural re-rank so a I-IV drone reads as I, not the IV (the D-then-G fix).
+- **test(metrics)** `a7b1525` — compareKey compares pitch classes, not mismatched strings (true key baseline).
+- **feat(voicings)** `cc0a9fc` + **fix** `d55cc6d` — chords-db (MIT) adopted as the guitar-voicing source with inversions + spelling filter; malformed 3rd Am voicing at the 5th position cleaned.
 
 ## [0.1.5] - 2026-06-06
 

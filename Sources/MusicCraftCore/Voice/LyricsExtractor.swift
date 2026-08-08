@@ -3,24 +3,33 @@ import Speech
 import AVFAudio
 import CoreMedia
 
-/// On-device lyric transcription wrapper around Apple's Speech framework.
-/// Produces timestamped word-level tokens for alignment with chord and melody timelines.
+/// On-device lyric transcription wrapper. Produces timestamped word-level tokens for alignment
+/// with chord and melody timelines.
 ///
-/// iOS 26+ uses the modern **SpeechAnalyzer / SpeechTranscriber** path (per-word timing from the
-/// time-indexed result attributes, optional per-token confidence, on-device model asset installed on
-/// demand). iOS 17–25 — and any iOS 26 failure (model asset unavailable, transcription throws) — use
-/// **SFSpeechRecognizer**, which remains the fallback floor. Uses system-managed language models; no
-/// model bundling or management by MCC. `transcribe(...)`'s signature is unchanged across both paths.
+/// Engine order (Sanctuary BACKLOG "Lyric transcription", GO 2026-08-07):
+/// 1. **WhisperLyricsEngine** (WhisperKit CoreML, whisper-small) — only when the consumer
+///    provides `Configuration.whisperModelFolder` AND the request is English (the pinned decode
+///    config was measured English-only). The quality path for SUNG material.
+/// 2. **Apple Speech** — the shipping fallback, taken when no model folder is set, the folder
+///    doesn't hold a loadable model, or the Whisper decode throws. iOS 26+ uses the modern
+///    **SpeechAnalyzer / SpeechTranscriber** path (per-word timing from the time-indexed result
+///    attributes, optional per-token confidence, on-device model asset installed on demand).
+///    iOS 17–25 — and any iOS 26 failure — use **SFSpeechRecognizer**, the fallback floor.
+///    The Apple paths use system-managed language models; no model bundling by MCC.
+///
+/// Whisper model MANAGEMENT (download, placement, eviction) is the consuming app's job; MCC
+/// only loads the folder it is handed. `transcribe(...)`'s signature is unchanged across paths.
 public enum LyricsExtractor {
-    /// Transcribe speech from an audio buffer, producing timestamped word-level tokens.
-    /// Async; wraps Apple's Speech framework (SpeechAnalyzer on iOS 26+, else SFSpeechRecognizer).
-    /// Uses system-managed language models; no model bundling or management by MCC.
+    /// Transcribe sung or spoken words from an audio buffer, producing timestamped word-level tokens.
+    /// Async; Whisper (WhisperKit) when `configuration.whisperModelFolder` is set and usable,
+    /// otherwise Apple's Speech framework (SpeechAnalyzer on iOS 26+, else SFSpeechRecognizer).
     ///
     /// - Parameters:
-    ///   - buffer: Mono Float32 PCM samples
+    ///   - buffer: Mono Float32 PCM samples. For sung material feed the FULL MIX, never an
+    ///     isolated vocal stem (stem measured worse — BACKLOG A/B, 2026-08-07).
     ///   - sampleRate: Sample rate in Hz (typically 44100 or 48000)
     ///   - locale: BCP 47 language tag (e.g., "en-US", "es-ES"). Defaults to device locale.
-    ///   - configuration: Optional tuning for speech detection (SpeechAnalyzer only; SFSpeechRecognizer ignores).
+    ///   - configuration: Whisper model folder + SpeechAnalyzer tuning (SFSpeechRecognizer ignores).
     /// - Returns: Array of timestamped tokens, or error if Speech framework is unavailable or transcription fails
     /// - Throws: SpeechFrameworkError wrapping Apple errors
     public static func transcribe(
@@ -30,6 +39,24 @@ public enum LyricsExtractor {
         configuration: Configuration? = nil
     ) async throws -> [TranscribedToken] {
         let localeIdentifier = locale ?? Locale.current.language.languageCode?.identifier ?? "en-US"
+
+        // Whisper-first when a model folder is provided. English-gated: the pinned decode config
+        // hard-codes language "en" (measured; see WhisperLyricsEngine) — a non-English request
+        // must not be silently decoded as English, so it goes straight to the Apple path.
+        // ANY Whisper failure (unloadable folder, missing tokenizer, decode error) falls through
+        // to the Apple path below, which ships unchanged as the fallback floor.
+        if let modelFolder = configuration?.whisperModelFolder,
+           localeIdentifier.lowercased().hasPrefix("en") {
+            do {
+                return try await WhisperLyricsEngine.transcribe(
+                    buffer: buffer,
+                    sampleRate: sampleRate,
+                    modelFolder: modelFolder
+                )
+            } catch {
+                // Deliberately swallowed: the Apple path is the documented recovery.
+            }
+        }
 
         // iOS 26+: try the modern SpeechAnalyzer path; on any failure (model asset can't be installed,
         // transcription throws) fall back to SFSpeechRecognizer. iOS 17–25: SFSpeechRecognizer directly.
@@ -298,7 +325,8 @@ public enum LyricsExtractor {
         return inputs
     }
 
-    /// Configuration for iOS 26+ SpeechAnalyzer. Ignored on iOS 17 SFSpeechRecognizer (forward-compatible).
+    /// Transcription tuning. The Whisper field selects the engine; the SpeechAnalyzer fields
+    /// apply to the iOS 26+ Apple path only (iOS 17 SFSpeechRecognizer ignores them).
     public struct Configuration: Equatable, Hashable, Sendable {
         /// Defer final results until the buffer ends, rather than returning partial hypotheses. Default: true.
         public let waitForFinalResult: Bool
@@ -307,9 +335,27 @@ public enum LyricsExtractor {
         /// Only applicable to iOS 26+ SpeechAnalyzer; iOS 17 SFSpeechRecognizer always returns nil.
         public let includeConfidence: Bool
 
-        public init(waitForFinalResult: Bool = true, includeConfidence: Bool = true) {
+        /// Folder holding a locally-managed WhisperKit CoreML model (the validated variant is
+        /// `openai_whisper-small`). When non-nil and loadable, English transcription runs through
+        /// `WhisperLyricsEngine` with the pinned decode config (Sanctuary BACKLOG "Lyric
+        /// transcription", GO 2026-08-07); when nil, unloadable, or on any decode failure, the
+        /// Apple Speech path runs unchanged. Default: nil (Apple path only).
+        ///
+        /// The folder must contain the model's `.mlmodelc` bundles + configs AND the tokenizer
+        /// files (`tokenizer.json` + `tokenizer_config.json`, either at the folder top level or
+        /// in Hub layout `models/openai/whisper-small/` inside the folder) for a fully-offline
+        /// load — without a local tokenizer WhisperKit attempts a network fetch, and an offline
+        /// failure falls back to Apple. Model download/placement/eviction is the app's job.
+        public let whisperModelFolder: URL?
+
+        public init(
+            waitForFinalResult: Bool = true,
+            includeConfidence: Bool = true,
+            whisperModelFolder: URL? = nil
+        ) {
             self.waitForFinalResult = waitForFinalResult
             self.includeConfidence = includeConfidence
+            self.whisperModelFolder = whisperModelFolder
         }
 
         public static let `default` = Configuration()
