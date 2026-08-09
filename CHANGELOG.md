@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2026-08-09
+
+### Added — `LyricsExtractor.prepare(configuration:)`: warm the Whisper engine before it is needed
+
+A consumer can now load the Whisper Core ML pipeline WITHOUT transcribing anything, so the first real
+transcription of a process pays for decoding alone. Additive; no existing signature changes and no
+decode behavior changes.
+
+**The report this answers.** Chris, on device 2026-08-09: *"I turned on the setting for Geo Location
+data and ran a quick test just a six second recording and the analysis took over 20 seconds."* Model
+load is a FIXED cost — it does not shrink with the audio — so on a six-second take it is not part of
+the analysis time, it IS the analysis time.
+
+**Measured, this Mac (Apple Silicon, ANE), `openai_whisper-small`, a real 6-second sung slice:**
+
+| stage | cost |
+|---|---|
+| first-ever load for a given client binary | **28.1 s** (Core ML specializing for the neural engine) |
+| every later load, fresh process | **0.57 s** |
+| decode of the 6-second clip | **0.21 s** |
+
+The specialization result is cached by the OS and keyed to the client, not just to the model: a second
+binary loading the same folder pays it again (measured — the xctest bundle's first `preload` cost
+24.9 s, its next two 1.0 s and 0.9 s). The device figure for that first load is 22 s (iPhone 17 Pro
+Max, Sanctuary BACKLOG "Lyric transcription", 2026-08-07).
+
+- **`LyricsExtractor.prepare(configuration:)`** — no-op when `whisperModelFolder` is nil, idempotent,
+  and FAIL-SOFT like the read path: a folder that cannot load is swallowed, because warming must never
+  become a new way for an app to learn about a problem it would otherwise route around.
+- **`WhisperLyricsEngine.preload(modelFolder:)`** (internal) — the same work, but it THROWS, so a
+  caller that wants to know can ask. That is what keeps `prepare`'s silence a policy and not a gap.
+- **WHEN to warm stays the app's decision.** MCC cannot know when a songwriter is about to sing, and
+  warming holds the models resident (measured peak footprint 139-160 MB), so warming at launch and
+  never recording is memory paid for nothing.
+
+### Fixed — the pipeline was loaded TWICE on every process's first transcription
+
+`PipelineStore` built its `WhisperKitConfig` with `prewarm: true` AND `load: true`, under a comment
+claiming prewarm gave "sequential per-model CoreML specialization [that] keeps peak load memory down
+(one model in memory at a time)". Reading upstream (WhisperKit 1.1.0 `Models.swift:24`,
+`WhisperKit.swift:360-437`) shows that is not what the flag does: `prewarmModels()` is
+`loadModels(prewarmMode: true)`, and in prewarm mode each loaded model is immediately DISCARDED
+(`model = prewarmMode ? nil : loadedModel`). With `load: true` also set, the same three `MLModel.load`
+calls simply ran a second time. It staged nothing — peak memory is set by the real load pass, which
+retains all three either way.
+
+Now `prewarm: false`. Measured with the specialization cache warm: **0.850 s → 0.572 s** for
+byte-identical loaded models. Decode behavior is untouched; the pinned decode config, the artifact
+filter and the Apple fallback are all unchanged, so the measured WER of the 2026-08-07 six-song
+validation still stands.
+
+### Documented — the pipeline cache survives across analyses, measured rather than asserted
+
+`PipelineStore`'s doc now carries the measurement instead of the claim: three consecutive
+`LyricsExtractor.transcribe` calls on one 6-second clip in one process, each with a freshly
+constructed `Configuration` (mirroring a consumer that builds a new analyzer per capture), cost
+**1.207 s, 0.238 s, 0.225 s**. Only the first pays the load, and nothing a consumer does at its own
+layer can defeat that — the store hangs off a module-level `static let` and is keyed by folder path,
+not held by the caller. What it cannot survive is process death, which is what `prepare` is for.
+
 ## [0.1.8] - 2026-08-08
 
 ### Added — the vocal-stem side-channel: the melodic contour traced from the separated voice

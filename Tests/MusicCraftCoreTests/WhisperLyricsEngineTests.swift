@@ -228,4 +228,36 @@ final class WhisperLyricsEngineTests: XCTestCase {
         XCTAssertNil(options.promptTokens)
         XCTAssertNil(options.prefixTokens)
     }
+
+    // MARK: - Warming (LyricsExtractor.prepare / WhisperLyricsEngine.preload)
+
+    /// No configured folder means there is nothing a consumer could preload — the Apple paths
+    /// own their own model assets. Must return promptly and never throw.
+    func testPrepareWithNoWhisperFolderIsANoOp() async {
+        await LyricsExtractor.prepare(configuration: .default)
+        await LyricsExtractor.prepare(configuration: LyricsExtractor.Configuration(whisperModelFolder: nil))
+    }
+
+    /// FAIL-SOFT: a folder that holds no loadable model must leave warming silent, exactly as an
+    /// unloadable folder leaves `transcribe` silently on the Apple path. Warming may never become
+    /// a new way for the app to learn about a problem it would otherwise route around.
+    func testPrepareWithAnUnloadableFolderStaysSilent() async {
+        let missing = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("mcc-whisper-warm-\(UUID().uuidString)", isDirectory: true)
+        await LyricsExtractor.prepare(configuration: LyricsExtractor.Configuration(whisperModelFolder: missing))
+    }
+
+    /// The engine-level door THROWS for the same folder the extractor-level door swallows — a
+    /// caller that wants to know can ask. This is what keeps `prepare`'s silence a deliberate
+    /// policy choice rather than a missing signal.
+    func testPreloadOnAnUnloadableFolderThrows() async {
+        let missing = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("mcc-whisper-warm-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try await WhisperLyricsEngine.preload(modelFolder: missing)
+            XCTFail("preload should throw for a folder holding no model")
+        } catch {
+            // Expected — WhisperKit reports the missing model files.
+        }
+    }
 }

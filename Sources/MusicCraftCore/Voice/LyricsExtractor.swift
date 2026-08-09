@@ -20,6 +20,32 @@ import CoreMedia
 /// Whisper model MANAGEMENT (download, placement, eviction) is the consuming app's job; MCC
 /// only loads the folder it is handed. `transcribe(...)`'s signature is unchanged across paths.
 public enum LyricsExtractor {
+    /// WARM THE WHISPER ENGINE AHEAD OF TIME. Loads the Core ML pipeline for
+    /// `configuration.whisperModelFolder` into the process cache so the next `transcribe` call
+    /// pays only for decoding. A no-op when no folder is configured (the Apple paths have no
+    /// consumer-loadable model), and idempotent — the pipeline cache serves every later call.
+    ///
+    /// THE COST IT MOVES (Sanctuary device report, Chris 2026-08-09: a six-second recording took
+    /// over twenty seconds to analyze). Whisper's model load is FIXED — it does not shrink with
+    /// the audio — so on a short take it is not part of the analysis time, it IS the analysis
+    /// time. Measured on this Mac for `openai_whisper-small`: 28.1 s for the first-ever load after
+    /// a fetch (Core ML specializing for the neural engine), 0.57 s for every later load in a
+    /// fresh process, 0.21 s to decode the 6-second clip itself. Device figure for that first load
+    /// is 22 s (iPhone 17 Pro Max, Sanctuary BACKLOG "Lyric transcription", 2026-08-07).
+    ///
+    /// FAIL-SOFT, LIKE THE READ PATH: any load failure is swallowed. A folder that cannot load is
+    /// not an error to warm — it simply means the next `transcribe` takes the Apple path, and
+    /// warming must never be a reason a caller shows an error it would not otherwise show.
+    ///
+    /// WHEN to warm is the APP's policy, not MCC's: MCC has no idea when a songwriter is about to
+    /// sing. Warming holds the loaded models resident (measured peak footprint 139-160 MB during
+    /// transcription), so a caller that warms at launch and never records has paid memory for
+    /// nothing. Songcatcher warms when the download finishes and when a capture surface opens.
+    public static func prepare(configuration: Configuration) async {
+        guard let modelFolder = configuration.whisperModelFolder else { return }
+        try? await WhisperLyricsEngine.preload(modelFolder: modelFolder)
+    }
+
     /// Transcribe sung or spoken words from an audio buffer, producing timestamped word-level tokens.
     /// Async; Whisper (WhisperKit) when `configuration.whisperModelFolder` is set and usable,
     /// otherwise Apple's Speech framework (SpeechAnalyzer on iOS 26+, else SFSpeechRecognizer).

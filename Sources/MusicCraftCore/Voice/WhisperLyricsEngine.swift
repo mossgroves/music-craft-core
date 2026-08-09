@@ -80,6 +80,29 @@ enum WhisperLyricsEngine {
     /// The tail artifact was only ever observed in the final window over a no-vocal fade.
     static let trailingArtifactWindowSeconds: TimeInterval = 30
 
+    // MARK: - Warming
+
+    /// LOAD THE PIPELINE WITHOUT TRANSCRIBING ANYTHING, so the first real transcription of a
+    /// process does not pay for it. Idempotent: a second call with the same folder returns the
+    /// pipeline the first one cached.
+    ///
+    /// WHY THIS EXISTS (Sanctuary device report, Chris 2026-08-09: a SIX-SECOND recording took
+    /// over twenty seconds to analyze). Model load is a FIXED cost that does not scale with the
+    /// audio, so on a short take it IS the analysis time. Measured on this Mac (Apple Silicon,
+    /// ANE, `openai_whisper-small`): the first-ever load after a fetch costs 28.1 s — Core ML
+    /// specializing the model for the neural engine, an artifact the OS then caches — while every
+    /// later load in a fresh process costs 0.57 s and the 6-second decode itself costs 0.21 s.
+    /// The device number for that first load is 22 s (iPhone 17 Pro Max, WhisperBench, Sanctuary
+    /// BACKLOG "Lyric transcription", 2026-08-07).
+    ///
+    /// MCC only offers the capability; WHEN to warm is the app's policy (Songcatcher warms when
+    /// the model finishes downloading and when a capture surface opens). Throws exactly what
+    /// `transcribe` would throw for the same folder, so a caller that wants to know can ask;
+    /// `LyricsExtractor.prepare` swallows it, matching the fail-soft contract of the read path.
+    static func preload(modelFolder: URL) async throws {
+        _ = try await PipelineStore.shared.pipeline(for: modelFolder)
+    }
+
     // MARK: - Transcription
 
     /// Transcribe a mono Float32 buffer with the pinned Whisper config, then strip the
@@ -237,6 +260,14 @@ enum WhisperLyricsEngine {
     /// full-song transcription costs 4-13 s — reloading per call would dominate the run.
     /// A folder change (app swaps model tiers) replaces the cached pipeline.
     ///
+    /// THE CACHE IS PROCESS-LIFETIME AND IT WORKS — measured, not assumed (2026-08-09, three
+    /// consecutive `LyricsExtractor.transcribe` calls on one 6-second clip in one process, each
+    /// with a freshly-constructed `Configuration`, mirroring Songcatcher building a new analyzer
+    /// per capture): 1.207 s, then 0.238 s, then 0.225 s. Only the first pays the load. Nothing a
+    /// consumer does at ITS layer can defeat this, because the store hangs off a module-level
+    /// `static let` and is keyed by path, not held by the caller. What the cache cannot survive is
+    /// process death, which is why `preload` exists.
+    ///
     /// Actor reentrancy note: two simultaneous first calls can both build a pipeline; the
     /// second overwrites the first (both are valid). Accepted — capture saves are serial in
     /// practice, and correctness is unaffected.
@@ -254,13 +285,24 @@ enum WhisperLyricsEngine {
             // either loads or this throws and the caller falls back to Apple. (The tokenizer
             // is also resolved locally when the app places tokenizer.json in the model folder
             // — see Configuration.whisperModelFolder docs.)
-            // prewarm: true — sequential per-model CoreML specialization keeps peak load
-            // memory down (one model in memory at a time), matching the validated harness.
+            //
+            // prewarm: FALSE, and the reason is a correction of what this line used to claim
+            // (2026-08-09). It read `prewarm: true` with the comment "sequential per-model CoreML
+            // specialization keeps peak load memory down (one model in memory at a time)". That is
+            // not what the flag does. Read upstream (WhisperKit 1.1.0 `Models.swift:24`,
+            // `WhisperKit.swift:360-437`): `prewarmModels()` is `loadModels(prewarmMode: true)`,
+            // and in prewarm mode each model is loaded and then IMMEDIATELY DISCARDED
+            // (`model = prewarmMode ? nil : loadedModel`). With `load: true` set as well, all three
+            // `MLModel.load` calls simply run a second time. It stages nothing: peak memory is set
+            // by the real load pass, which retains all three either way. Measured on this Mac with
+            // the Core ML specialization cache already warm: 0.850 s with prewarm against 0.572 s
+            // without, for byte-identical loaded models. The duplicate pass is pure latency on the
+            // first transcription of every process, so it is gone.
             let config = WhisperKitConfig(
                 modelFolder: folder.path,
                 verbose: false,
                 logLevel: .error,
-                prewarm: true,
+                prewarm: false,
                 load: true,
                 download: false
             )

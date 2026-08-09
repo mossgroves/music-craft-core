@@ -66,6 +66,45 @@ final class WhisperLyricsEngineIntegrationTests: XCTestCase {
         print(tokens.map(\.text).joined(separator: " "))
     }
 
+    /// WARMING MOVES THE LOAD, and this is the measurement that proves it rather than asserting
+    /// it. `preload` pays the model load; the transcription that follows pays only decode. The
+    /// assertion is deliberately loose (warmed decode must beat the cold first call) because the
+    /// absolute numbers are host-dependent — measured on the 2026-08-09 Mac for a 6-second clip:
+    /// cold 1.207 s, warmed 0.238 s. A regression that puts the load back on the read path would
+    /// make the two roughly equal and fail here.
+    func testPreloadMovesTheModelLoadOffTheFirstTranscription() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let modelDir = environment["MCC_WHISPER_MODEL_DIR"] else {
+            throw XCTSkip("MCC_WHISPER_MODEL_DIR not set — skipping real-inference test.")
+        }
+        guard let audioPath = environment["MCC_WHISPER_AUDIO_FILE"] else {
+            throw XCTSkip("MCC_WHISPER_AUDIO_FILE not set — skipping real-inference test.")
+        }
+
+        let (samples, sampleRate) = try Self.loadMono(URL(fileURLWithPath: audioPath))
+        let folder = URL(fileURLWithPath: modelDir, isDirectory: true)
+        let configuration = LyricsExtractor.Configuration(whisperModelFolder: folder)
+
+        // The warm. Everything after this point should be decode-only.
+        let warmStart = Date()
+        await LyricsExtractor.prepare(configuration: configuration)
+        let warmSeconds = Date().timeIntervalSince(warmStart)
+
+        let readStart = Date()
+        let tokens = try await LyricsExtractor.transcribe(
+            buffer: samples, sampleRate: sampleRate, locale: "en-US", configuration: configuration
+        )
+        let readSeconds = Date().timeIntervalSince(readStart)
+
+        XCTAssertFalse(tokens.isEmpty, "Expected words from \(audioPath)")
+        XCTAssertLessThan(
+            readSeconds, warmSeconds,
+            "A transcription after prepare() must be cheaper than the load it skipped "
+                + "(warm \(String(format: "%.3f", warmSeconds))s, read \(String(format: "%.3f", readSeconds))s)"
+        )
+        print("preload \(String(format: "%.3f", warmSeconds))s then transcribe \(String(format: "%.3f", readSeconds))s")
+    }
+
     /// Load any AVFoundation-readable audio file as mono Float32 at its native sample rate,
     /// averaging channels (the spike wavs are stereo; LyricsExtractor takes mono).
     private static func loadMono(_ url: URL) throws -> (samples: [Float], sampleRate: Double) {
