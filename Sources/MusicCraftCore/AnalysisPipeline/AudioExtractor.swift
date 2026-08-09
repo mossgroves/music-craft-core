@@ -23,6 +23,12 @@ import Foundation
 /// **I/O:** the model is loaded the first time `extract` runs (once, process-wide via a cached `static let`), so
 /// the type is no longer a pure / no-I/O function. If the model can't load, `extract` degrades to a well-formed
 /// empty `Result` rather than crashing.
+///
+/// **The vocal-stem side-channel (0.1.8).** A take that contains singing can have its `contour` — and ONLY its
+/// `contour` — traced from an isolated vocal signal instead of from the mix, via
+/// `Configuration.contourSource == .isolatedVoice` or the `isolatedVoice:` overload. Everything else in
+/// `Result` still comes from the single mix pass, unchanged. See `ContourSource` for the measured evidence and
+/// the gating rule.
 public enum AudioExtractor {
 
     /// Extract chord segments, key, melodic contour, and detected notes from an audio buffer.
@@ -31,12 +37,43 @@ public enum AudioExtractor {
     ///   - buffer: Mono Float32 PCM samples.
     ///   - sampleRate: Sample rate in Hz (typically 44100 or 48000).
     ///   - configuration: Optional tuning. Retained for API compatibility; the Basic Pitch front-end derives
-    ///     its own note events, so the legacy DSP-tuning fields are vestigial under the current path.
+    ///     its own note events, so the legacy DSP-tuning fields are vestigial under the current path. The one
+    ///     field the current path DOES read is `contourSource`.
     /// - Returns: Bundled extraction result.
     public static func extract(
         buffer: [Float],
         sampleRate: Double,
         configuration: Configuration = .default
+    ) -> Result {
+        extract(buffer: buffer, sampleRate: sampleRate, configuration: configuration, isolatedVoice: nil)
+    }
+
+    /// Extract with an ALREADY-ISOLATED vocal signal supplied by the caller.
+    ///
+    /// Same as `extract(buffer:sampleRate:configuration:)` in every respect except one: when
+    /// `isolatedVoice` is non-nil it is transcribed in a second Basic Pitch pass whose ONLY output that
+    /// reaches the `Result` is `contour`. Passing a buffer here IS the request — `configuration.contourSource`
+    /// is not consulted, and MCC does not run the AudioUnit itself.
+    ///
+    /// Use this overload when the app already holds a stem (it rendered one for another reason, or it must own
+    /// the AudioUnit's thread/actor context). Otherwise prefer `Configuration.contourSource = .isolatedVoice`
+    /// and let MCC own the isolation — MCC owns DSP, and the AU is available in MCC's deployment context
+    /// (`macos(13.0)`/`ios(16.0)`, below MCC's macOS 14 / iOS 17 floors).
+    ///
+    /// - Parameters:
+    ///   - buffer: Mono Float32 PCM samples of the FULL MIX. Every field except `contour` derives from this.
+    ///   - sampleRate: Sample rate in Hz. `isolatedVoice` must be at this SAME rate.
+    ///   - configuration: Optional tuning (see the three-argument overload).
+    ///   - isolatedVoice: Mono Float32 samples of the isolated voice, time-aligned with `buffer`, or nil to
+    ///     take the source from `configuration.contourSource`. Samples may exceed ±1.0 (measured peak 1.12);
+    ///     nothing here normalizes them.
+    /// - Returns: Bundled extraction result, with the mix-derived contour kept whenever the stem-derived one
+    ///   is missing or fails the plausibility guard.
+    public static func extract(
+        buffer: [Float],
+        sampleRate: Double,
+        configuration: Configuration = .default,
+        isolatedVoice: [Float]?
     ) -> Result {
         let duration = TimeInterval(buffer.count) / sampleRate
 
@@ -69,11 +106,115 @@ public enum AudioExtractor {
                          duration: max(0.001, $0.duration),
                          confidence: min(1, max(0.1, $0.velocity)))
         }
-        let contour = deriveContour(from: skyline(of: notes))                           // contour = melodic skyline (single line)
+        let mixContour = deriveContour(from: skyline(of: notes))                        // contour = melodic skyline (single line)
         let key = inferKey(from: chordSegments, fallbackNotes: detectedNotes)           // chord-based first, full-poly fallback
+
+        // THE ONLY STEM-READING STEP. The optional second pass derives a contour from an isolated
+        // vocal signal; `selectContour` decides whether it is good enough to reach the Result, and
+        // keeps the mix-derived contour whenever it is not. Every other field above is already
+        // computed from the mix and is not revisited — that separation is the feature's hard rule.
+        let stemContour = isolatedVoiceContour(
+            mix: buffer, sampleRate: sampleRate, configuration: configuration, provided: isolatedVoice
+        )
+        let contour = selectContour(mix: mixContour, stem: stemContour, duration: duration)
+
         // Take-type signal over the FULL polyphony (same `notes`) — not the melodic skyline.
         return Result(chordSegments: chordSegments, key: key, contour: contour, detectedNotes: detectedNotes, duration: duration, voicingDensity: voicingDensity(of: notes))
     }
+
+    // MARK: - Vocal-stem contour side-channel (0.1.8)
+
+    /// Resolve which isolated-voice samples the second pass should read, then transcribe them into a
+    /// contour. Returns nil whenever there is no stem to read or the stem cannot produce one — every
+    /// nil path falls back to exactly today's behavior, with no user-visible error (hard rule: FAIL
+    /// SOFT, ALWAYS).
+    ///
+    /// Precedence: a caller-supplied `provided` buffer wins outright (passing one IS the request);
+    /// otherwise `.isolatedVoice` asks MCC to run `VocalIsolator` on the mix; otherwise nil.
+    private static func isolatedVoiceContour(
+        mix: [Float],
+        sampleRate: Double,
+        configuration: Configuration,
+        provided: [Float]?
+    ) -> [ContourNote]? {
+        let voice: [Float]
+        if let provided {
+            voice = provided
+        } else if configuration.contourSource == .isolatedVoice {
+            // Any throw — component missing, AU error, render failure — becomes nil.
+            //
+            // Cancellation lands here too. `extract` is synchronous and non-throwing, so it has no way
+            // to report "aborted"; swallowing `.cancelled` means an expiring BGProcessingTask STOPS THE
+            // RENDER promptly and this call finishes with today's mix contour, instead of grinding
+            // through a render whose result nobody will read. The caller's own cancellation check, after
+            // `extract` returns, still decides whether to keep the Result.
+            guard let isolated = try? VocalIsolator.isolateVoice(mix, sampleRate: sampleRate) else { return nil }
+            voice = isolated
+        } else {
+            return nil
+        }
+        return contourFromVoice(voice, sampleRate: sampleRate)
+    }
+
+    /// Second Basic Pitch pass over the isolated voice, reduced to a melodic skyline and differenced
+    /// into a contour — the same two steps the mix path uses, so the two contours are the same kind of
+    /// object and are interchangeable at the `Result`.
+    ///
+    /// The same `silenceFloorPeak` guard the mix path uses runs here first, and it matters MORE on a
+    /// stem: isolation of a take with no singing leaves sparse transient residue that a pitch tracker
+    /// reads as plausible phantom notes. Note the peak check is a floor, never a ceiling — the AU's
+    /// output can exceed full scale (measured 1.12) and that is not an error.
+    private static func contourFromVoice(_ voice: [Float], sampleRate: Double) -> [ContourNote]? {
+        guard !voice.isEmpty, sampleRate > 0 else { return nil }
+        let peak = voice.lazy.map { Swift.abs($0) }.max() ?? 0
+        guard peak >= silenceFloorPeak else { return nil }
+        guard let transcriber = sharedBasicPitchTranscriber,
+              let transcription = try? transcriber.transcribe(voice, sampleRate: sampleRate) else { return nil }
+        return deriveContour(from: skyline(of: transcription.notes))
+    }
+
+    /// **The plausibility guard.** Pure: choose between the mix-derived contour and the stem-derived
+    /// one. The mix contour wins unless the stem contour exists AND clears
+    /// `isPlausibleStemContour` — so a failed, empty, or degenerate isolation costs nothing but the
+    /// render time.
+    static func selectContour(
+        mix: [ContourNote],
+        stem: [ContourNote]?,
+        duration: TimeInterval
+    ) -> [ContourNote] {
+        guard let stem, isPlausibleStemContour(stem, duration: duration) else { return mix }
+        return stem
+    }
+
+    /// Is a stem-derived contour dense enough to be a sung line rather than the debris of a failed
+    /// separation?
+    ///
+    /// Empty is rejected outright. Otherwise the test is note events per second of take, because
+    /// "sparse" is only meaningful relative to duration: 20 events is a rich four-second hum and an
+    /// empty four-minute song. The floor is `minimumStemContourNoteRate`.
+    ///
+    /// A DENSITY CEILING is deliberately absent. The mix's problem is that it is too dense (4.27
+    /// events/s of noise on "6 Human"), so a ceiling is tempting — but a fast sung melisma is also
+    /// dense, and no measurement yet separates the two. Adding one would silently discard real
+    /// melodies; the guard only protects against the failure it has evidence for.
+    static func isPlausibleStemContour(_ contour: [ContourNote], duration: TimeInterval) -> Bool {
+        guard !contour.isEmpty else { return false }
+        guard duration > 0 else { return false }
+        return Double(contour.count) / duration >= minimumStemContourNoteRate
+    }
+
+    /// Minimum note events per second for a stem-derived contour to be believed.
+    ///
+    /// **PROVISIONAL, pending device tuning.** Anchored to the single measured pair (2026-08-08,
+    /// "6 Human", 278.8 s): the isolated voice yields 394 events = 1.41/s, the mix yields 1190 = 4.27/s.
+    /// 0.25/s is a fifth of the measured sung rate — deliberately far below it, because the guard's
+    /// job is to catch a separation that produced NOTHING (silence, a wrong-model render, an
+    /// instrument-only take that slipped the caller's gate), not to adjudicate musical density. One
+    /// held note per four seconds still passes. Raising it trades false rejections (a sparse real hum
+    /// silently falls back to the noisy mix contour, which is a quality loss the user cannot see)
+    /// against false acceptances (phantom notes reach the melody line, which the user CAN see), so it
+    /// should only move on device evidence from real takes, not on intuition.
+    static let minimumStemContourNoteRate: Double = 0.25
 
     // MARK: - Basic Pitch note source
 
@@ -407,10 +548,39 @@ public enum AudioExtractor {
 
     /// Tuning parameters for audio extraction.
     ///
-    /// These fields tuned the removed YIN + FFT-chroma DSP pipeline and are now vestigial under the
-    /// Basic Pitch front-end. They are retained so existing call sites (`Configuration()` / `.default`)
-    /// stay source-compatible; the Basic Pitch path does not read them.
+    /// Most of these fields tuned the removed YIN + FFT-chroma DSP pipeline and are now vestigial under
+    /// the Basic Pitch front-end. They are retained so existing call sites (`Configuration()` /
+    /// `.default`) stay source-compatible; the Basic Pitch path does not read them. `contourSource`
+    /// (added 0.1.8) is the exception — it IS read.
     public struct Configuration: Equatable, Hashable, Sendable {
+
+        /// Where the melodic `contour` is traced from. Every OTHER field of `Result` reads the full mix
+        /// regardless of this setting.
+        ///
+        /// **Why the option exists (measured 2026-08-08, "6 Human", approved by Chris the same day).**
+        /// A contour traced from a mix is not a melody: the mix yields 1190 note events at 4.27/s with
+        /// 11% stepwise motion — the signature of noise; the isolated voice yields 394 at 1.41/s with
+        /// 54% stepwise motion — a singable line.
+        ///
+        /// **Why it is not the default, and never becomes one automatically.** Isolation must run only
+        /// on takes that actually contain singing. Measured, isolating an instrument-only take leaves
+        /// sparse transient residue peaking at -5 dBFS that a pitch tracker reads as plausible phantom
+        /// notes that were never sung. That decision is the CONSUMER's, made from MIX-derived signals
+        /// (the app's take-type routing: `Result.voicingDensity` plus transcript presence) — MCC
+        /// deliberately does not invent a second threshold here, for the same reason `voicingDensity`
+        /// ships as a number and not a verdict: the sung/played boundary is app policy. Setting
+        /// `.isolatedVoice` asserts "this take contains singing"; MCC takes that assertion at its word.
+        public enum ContourSource: String, Equatable, Hashable, Sendable, CaseIterable {
+            /// Today's behavior, unchanged: the contour is the melodic skyline of the single mix pass.
+            case mix
+            /// Run `VocalIsolator` on the mix, transcribe the isolated voice in a second Basic Pitch
+            /// pass, and take the contour from that — falling back to `.mix` on any failure or an
+            /// implausible result. Costs one AU render (measured 82-97x realtime mono, 43-45x stereo on
+            /// an iPhone 17 Pro Max) plus one extra Basic Pitch pass. The isolated audio is transient:
+            /// it is never returned, cached, or written anywhere.
+            case isolatedVoice
+        }
+
         /// Minimum gap between successive onsets in milliseconds. Default 500.
         public let onsetMinGapMs: Double
         /// Energy multiplier for onset detection threshold. Default 2.0.
@@ -429,8 +599,14 @@ public enum AudioExtractor {
         public let extractionMinConfidence: Double
         /// Silence threshold (RMS) for noise calibration. Default 0.001 (-60dB).
         public let silenceThreshold: Float
+        /// Where the melodic contour is traced from. Default `.mix` — existing callers are
+        /// byte-identical in behavior. See `ContourSource`.
+        public let contourSource: ContourSource
 
         /// Creates a Configuration with custom parameters.
+        ///
+        /// `contourSource` is appended LAST with a default so every existing call site — positional or
+        /// labeled, full or partial — keeps compiling and keeps behaving identically.
         public init(
             onsetMinGapMs: Double = 500,
             onsetEnergyMultiplier: Float = 2.0,
@@ -440,7 +616,8 @@ public enum AudioExtractor {
             earlyFrameAttackSkip: Int = 2,
             earlyFrameWindowSize: Int = 8,
             extractionMinConfidence: Double = 0.25,
-            silenceThreshold: Float = 0.001
+            silenceThreshold: Float = 0.001,
+            contourSource: ContourSource = .mix
         ) {
             self.onsetMinGapMs = onsetMinGapMs
             self.onsetEnergyMultiplier = onsetEnergyMultiplier
@@ -451,6 +628,7 @@ public enum AudioExtractor {
             self.earlyFrameWindowSize = earlyFrameWindowSize
             self.extractionMinConfidence = extractionMinConfidence
             self.silenceThreshold = silenceThreshold
+            self.contourSource = contourSource
         }
 
         /// Default configuration.

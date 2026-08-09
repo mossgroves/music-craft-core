@@ -5,6 +5,108 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-08-08
+
+### Added — the vocal-stem side-channel: the melodic contour traced from the separated voice
+
+On a recording that contains singing, the melody can now be traced from an ISOLATED VOCAL SIGNAL
+instead of from the full mix. That is the whole feature. It exists because a contour traced from a mix
+is not a melody: measured on "6 Human" (2026-08-08), the mix yields 1190 note events at 4.27/s with 11%
+stepwise motion — the signature of noise; the isolated voice yields 394 at 1.41/s with 54% stepwise
+motion — a singable line. Chris listened to the rendered stems and approved on 2026-08-08.
+
+- **`Voice/VocalIsolator` (new public type).** Offline-renders a mono or stereo non-interleaved Float32
+  buffer through Apple's **AUSoundIsolation** AudioUnit (`aufx`/`vois`/`appl`, reported as
+  "Apple: AUSoundIsolation" 1.6.0) in `AVAudioEngine.manualRenderingMode(.offline)`, fully wet,
+  isolating voice. Two entry points — `isolateVoice(_:sampleRate:) -> [Float]` (mono, the shape
+  `AudioExtractor` consumes) and `isolateVoice(_:) -> AVAudioPCMBuffer` (mono or stereo) — plus an
+  `isAvailable` component probe. Ported from the on-device-validated `StemProbe.swift` harness:
+  - **`AVAudioUnit.instantiate`, never `AVAudioUnitEffect.init`** — the former hands back an `Error`,
+    the latter raises an uncatchable ObjC exception. Every failure path throws a typed
+    `VocalIsolator.Failure`; nothing traps.
+  - **`kAudioUnitProperty_SupportedNumChannels` is checked BEFORE connecting**, because
+    `AVAudioEngine.connect` also raises an uncatchable exception on a layout the AU refuses.
+  - **Parameters are set before engine initialization and then VERIFIED BY READ-BACK.**
+    `WetDryMixPercent` 100 and `SoundToIsolate` = `HighQualityVoice`. The read-back is required, not
+    defensive: the parameter's historical declared range was 1...1, so a write of 0 can be silently
+    CLAMPED rather than rejected. `HighQualityVoice` is `macos(15.0)`/`ios(18.0)` — below MCC's floors —
+    so it is requested behind `#available` with a runtime fallback to the standard `_Voice` model.
+  - **Latency compensation from the AU's own report**, never hardcoded: `kAudioUnitProperty_Latency`
+    (measured 6360 frames at 48 kHz stereo, 4440 mono) is trimmed off the head so derived timings stay
+    aligned with the recording. The arithmetic is factored into pure, unit-tested helpers
+    (`headTrimFrames` / `totalFramesToRender` / `headTrimSplit`).
+  - **Output can exceed full scale** (measured peak 1.12) and is deliberately neither normalized nor
+    clipped; the silence guard downstream is a floor, never a ceiling.
+  - `Task.isCancelled` is checked per render block, so an expiring BGProcessingTask stops the render
+    promptly instead of finishing it.
+- **`AudioExtractor.Configuration.ContourSource` + an `isolatedVoice:` overload (both additive).**
+  `contourSource` defaults to `.mix`, so **existing callers are byte-identical in behavior**; the new
+  field is appended last on the memberwise initializer, so the pre-0.1.8 nine-argument call still
+  compiles. `.isolatedVoice` asks MCC to run `VocalIsolator` itself and transcribe the result in a
+  second Basic Pitch pass; the `extract(buffer:sampleRate:configuration:isolatedVoice:)` overload takes
+  an already-isolated buffer instead. **MCC owns the isolation** (MCC owns DSP, and the AU is
+  `macos(13.0)`/`ios(16.0)`, below MCC's macOS 14 / iOS 17 floors, so it always links); the overload
+  exists for apps that already hold a stem or must own the AudioUnit's thread context.
+- **ONLY the contour reads the stem.** `chordSegments`, `key`, `detectedNotes`, `voicingDensity` and
+  `duration` all still derive from the single mix pass, untouched — as does tempo, which consumers
+  estimate from `detectedNotes`. The measured reasons: the stem reads `voicingDensity` 1.09 on a take
+  whose mix reads 2.50, which would misclassify a full-band take as a hum and cascade through every
+  consumer gate; and lyric transcription measured WORSE on stems (23.9% WER vs 16.7-22.8% on the mix)
+  because separation damages consonants. A unit test asserts field-by-field that supplying a voice
+  buffer moves the contour and nothing else.
+- **Gating on voice is the CONSUMER's call, deliberately.** Isolation must never run on an
+  instrument-only take: measured, it leaves sparse transient residue peaking at -5 dBFS that a pitch
+  tracker reads as plausible phantom notes that were never sung. The decision comes from MIX-derived
+  signals (the app's take-type routing: `voicingDensity` plus transcript presence, the latter of which
+  MCC cannot see). MCC does not invent a second threshold, for the same reason `voicingDensity` ships
+  as a number and not a verdict.
+- **The plausibility guard (`AudioExtractor.isPlausibleStemContour`, pure and unit-tested).** A
+  stem-derived contour that is empty, or thinner than `minimumStemContourNoteRate` = **0.25 note
+  events per second of take**, is discarded and the mix-derived contour is kept.
+  **The threshold is PROVISIONAL pending device tuning.** It is anchored to the single measured pair
+  above (1.41/s sung vs 4.27/s mix) and sits at a fifth of the sung rate — deliberately far below it,
+  because the guard's job is to catch a separation that produced NOTHING, not to adjudicate musical
+  density. One held note per four seconds still passes. A density CEILING is deliberately absent: a
+  fast melisma is also dense and no measurement yet separates it from noise.
+- **Fail soft, always.** Component missing, instantiation error, refused layout, render failure,
+  cancellation, an empty or near-silent stem, or an implausible contour — every one of them falls back
+  to exactly today's behavior (contour from the mix) with no user-visible error. The stem is
+  transient: it is never cached, stored, synced, or written anywhere, so storage growth is zero.
+- Tests: **+51** (409 → 460 executed). `VocalIsolatorTests` (+24, AU-free) covers the latency-trim
+  arithmetic against the measured 6360/4440-frame values, frame-count conservation across a whole
+  render, channel-support wildcards, and every failure reachable without the AU;
+  `AudioExtractorContourSourceTests` (+22) covers the plausibility guard, contour selection, the
+  configuration surface, and API routing on real bundled fixtures (including the field-by-field proof
+  that only the contour changes); `PublicAPITests` (+2) pins the new public surface per the Tier 2
+  rule; `VocalIsolatorIntegrationTests` (+3) is environment-gated and skips by default (18 → 21
+  skipped). `musicCraftCoreVersion` → "0.1.8". Full suite: **460 executed, 21 skipped, 3 failures** —
+  the same 3 long-documented GuitarSet expected-failures in the same two test cases, no new ones
+  (baseline re-measured on pristine HEAD in the same session: 409 executed, 18 skipped, 3 failures,
+  identical failure set).
+- **Real-render proof (environment-gated `VocalIsolatorIntegrationTests`, 3 tests, RUN LOCALLY
+  2026-08-08 on "6 Human.wav").** Gated behind `MCC_ISOLATION_AUDIO_FILE` (plus optional
+  `MCC_ISOLATION_INSTRUMENTAL_END`, default 10 s) so the normal suite stays AU-free. The AU ships on
+  macOS too, so this runs on the development Mac. The test that matters is the energy check: a
+  pass-through would show no difference, but the stem must lose far more energy in a region where
+  nobody is singing than it loses over the take as a whole. "6 Human" has its first sung word at 13.84 s
+  (WhisperBench transcript, 2026-08-07), so its first 10 s is genuinely instrumental.
+
+  | path | frames in → out | speed | stem/source RMS, whole | stem/source RMS, instrumental | stem peak |
+  | --- | --- | --- | --- | --- | --- |
+  | stereo, buffer API | 13382400 → 13382400 | 28x realtime | 0.5377 | 0.0881 | 1.1191 |
+  | mono, sample-array API | 13382400 → 13382400 | 66x realtime | 0.6583 | 0.0480 | 1.1876 |
+
+  The stereo row reproduces the 2026-08-08 on-device measurement almost exactly (device: 0.5378 whole,
+  0.0885 instrumental, peak 1.1220) — independent corroboration that this port renders what the probe
+  rendered. Equal in-and-out frame counts are the latency compensation working. The third test drives
+  the whole feature through `AudioExtractor` on a 45 s window of the same file (bounded because Basic
+  Pitch is slow in an unoptimized test build) and reproduces the finding the feature exists for: mix
+  contour **158 events at 3.51/s**, stem contour **50 events at 1.11/s**, with every mix-derived field
+  unchanged.
+- **Not done here, on purpose:** no mass re-analysis of existing recordings (they keep their current
+  reading until the songwriter listens again, matching how the Whisper engine shipped), and no stem
+  caching — a future "hear only your voice" feature would need it and is explicitly out of this scope.
+
 ## [0.1.7] - 2026-08-08
 
 ### Changed — chord quality on real songs: Viterbi sequence decode + bare-dyad guard + key-aware prior

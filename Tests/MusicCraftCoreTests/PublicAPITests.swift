@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 import MusicCraftCore
 
@@ -214,5 +215,42 @@ final class PublicAPITests: XCTestCase {
         // Same nil contract as `identify`: no usable harmonic content, no vector.
         XCTAssertNil(NoteChordIdentifier.candidateScores(weightedPitchClasses: [Double](repeating: 0, count: 12),
                                                          bassPitchClass: nil))
+    }
+
+    // MARK: - Vocal-stem contour side-channel (0.1.8)
+
+    /// The public surface a consumer needs in order to ask for a stem-derived contour: the enum, the
+    /// configuration field, its `.mix` default, and the `isolatedVoice:` overload. Pinned per the
+    /// Tier 2 release rule (PublicAPITests extended whenever public types are added).
+    func testAudioExtractorContourSourcePublicAPI() {
+        XCTAssertEqual(AudioExtractor.Configuration.ContourSource.allCases, [.mix, .isolatedVoice])
+        XCTAssertEqual(AudioExtractor.Configuration.default.contourSource, .mix)
+
+        let isolated = AudioExtractor.Configuration(contourSource: .isolatedVoice)
+        XCTAssertEqual(isolated.contourSource, .isolatedVoice)
+
+        // The overload exists and accepts nil (= exactly the three-argument behavior).
+        let result = AudioExtractor.extract(buffer: [], sampleRate: 44100, isolatedVoice: nil)
+        XCTAssertTrue(result.contour.isEmpty)
+    }
+
+    /// `VocalIsolator`'s public surface: the availability probe and both isolation entry points, which
+    /// must THROW rather than trap on bad input — the whole type is built so a consumer can fail soft.
+    func testVocalIsolatorPublicAPI() {
+        // Answers on any machine, with or without the AU present.
+        _ = VocalIsolator.isAvailable
+
+        XCTAssertThrowsError(try VocalIsolator.isolateVoice([], sampleRate: 48000)) { error in
+            XCTAssertEqual(error as? VocalIsolator.Failure, .emptyInput)
+        }
+
+        guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 1, interleaved: false),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 64) else {
+            return XCTFail("could not build a probe buffer")
+        }
+        buffer.frameLength = 0
+        XCTAssertThrowsError(try VocalIsolator.isolateVoice(buffer)) { error in
+            XCTAssertEqual(error as? VocalIsolator.Failure, .emptyInput)
+        }
     }
 }
