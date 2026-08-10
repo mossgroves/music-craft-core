@@ -233,7 +233,16 @@ enum WhisperLyricsEngine {
             kept.removeLast()
         }
 
-        return kept.flatMap { $0 }
+        // The recognizer's own segment boundaries, preserved (0.1.11). Marked HERE, after the
+        // filters, so a dropped caption or ghost cannot leave the flag on a word that is no
+        // longer the segment's first — the flag must describe the stream that is returned.
+        return kept.flatMap { segment -> [TranscribedToken] in
+            segment.enumerated().map { index, token in
+                TranscribedToken(text: token.text, onsetTime: token.onsetTime,
+                                 duration: token.duration, confidence: token.confidence,
+                                 startsSegment: index == 0)
+            }
+        }
     }
 
     /// True when every token in the segment normalizes to "music" (case-insensitive, ignoring

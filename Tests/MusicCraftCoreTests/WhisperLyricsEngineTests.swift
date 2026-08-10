@@ -325,4 +325,56 @@ final class WhisperLyricsEngineTests: XCTestCase {
             // Expected — WhisperKit reports the missing model files.
         }
     }
+
+    // MARK: - The recognizer's own segment boundaries (0.1.11)
+
+    /// Whisper decodes in segments and reports where each begins. That boundary is a real signal
+    /// about phrasing, and MCC used to drop it when flattening segments into one stream. Now the
+    /// first token of each segment carries it.
+    func testTheFirstTokenOfEachSegmentIsMarked() {
+        let first = [token("Forever", onset: 0.4, confidence: 0.9),
+                     token("I", onset: 0.9, confidence: 0.9)]
+        let second = [token("Forever", onset: 3.0, confidence: 0.9),
+                      token("I", onset: 3.4, confidence: 0.9)]
+
+        let filtered = WhisperLyricsEngine.filterArtifacts(segments: [first, second],
+                                                           audioDuration: 60)
+
+        XCTAssertEqual(filtered.map(\.startsSegment), [true, false, true, false])
+    }
+
+    /// THE FLAG DESCRIBES THE STREAM THAT IS RETURNED, not the one that went in: if the
+    /// segment's original first word was a ghost and got dropped, the flag moves to the word
+    /// that IS now first.
+    func testTheFlagFollowsTheSurvivingFirstWord() {
+        let segment = [token("Forever", onset: 3.0, confidence: 0.9),
+                       token("ghost", onset: 3.2, confidence: 0.04),
+                       token("I", onset: 3.4, confidence: 0.9)]
+        // A first segment exists so the take-opening exemption is spent before this one.
+        let opener = [token("start", onset: 0.2, confidence: 0.9)]
+
+        let filtered = WhisperLyricsEngine.filterArtifacts(segments: [opener, segment],
+                                                           audioDuration: 60)
+
+        XCTAssertEqual(filtered.map(\.text), ["start", "Forever", "I"])
+        XCTAssertEqual(filtered.map(\.startsSegment), [true, true, false])
+    }
+
+    /// A dropped caption segment does not leave a stray boundary behind.
+    func testADroppedCaptionDoesNotLeaveABoundary() {
+        let caption = [token("Music", onset: 0.1, confidence: 0.9)]
+        let real = [token("Listen", onset: 4.0, confidence: 0.9),
+                    token("to", onset: 4.3, confidence: 0.9)]
+
+        let filtered = WhisperLyricsEngine.filterArtifacts(segments: [caption, real],
+                                                           audioDuration: 60)
+
+        XCTAssertEqual(filtered.map(\.text), ["Listen", "to"])
+        XCTAssertEqual(filtered.map(\.startsSegment), [true, false])
+    }
+
+    /// Existing callers are untouched: the flag defaults to false.
+    func testTheFlagDefaultsToFalse() {
+        XCTAssertFalse(TranscribedToken(text: "word", onsetTime: 0, duration: 0.3).startsSegment)
+    }
 }
