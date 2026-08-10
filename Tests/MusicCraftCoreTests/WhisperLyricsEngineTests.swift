@@ -70,6 +70,71 @@ final class WhisperLyricsEngineTests: XCTestCase {
         XCTAssertEqual(filtered.map(\.text), ["the", "stays"])
     }
 
+    // MARK: - The take's opening word (2026-08-10)
+
+    /// THE BUG THIS FIXES, in Chris's words: *"Forever analysis also lost the opening, first word
+    /// of the song."* Whisper under-scores a take's first word for reasons unrelated to whether
+    /// it was sung — no left context after the prefill, opening syllable caught mid-attack over a
+    /// music bed. Measured across the six scored songs the opening word runs 0.06 to 0.48 (median
+    /// 0.215) against a corpus median of 0.98, so a floor drawn against hallucinations ate two of
+    /// six real openings.
+    func testTheTakesFirstWordSurvivesBelowTheFloor() {
+        // "1 Forever" opens "Forever I have looked"; the export read "I have looked".
+        let segment = [
+            token("Forever", onset: 0.4, confidence: 0.06),
+            token("I", onset: 0.9, confidence: 0.97),
+            token("have", onset: 1.1, confidence: 0.98),
+            token("looked", onset: 1.4, confidence: 0.96),
+        ]
+
+        let filtered = WhisperLyricsEngine.filterArtifacts(segments: [segment], audioDuration: 248)
+
+        XCTAssertEqual(filtered.map(\.text), ["Forever", "I", "have", "looked"])
+    }
+
+    /// THE EXEMPTION IS ONE TOKEN, NOT A HOLE. A ghost immediately after the opening word is
+    /// still a ghost.
+    func testOnlyTheVeryFirstWordIsExempt() {
+        let segment = [
+            token("Forever", onset: 0.4, confidence: 0.06),
+            token("ghost", onset: 0.7, confidence: 0.04),
+            token("I", onset: 0.9, confidence: 0.97),
+        ]
+
+        let filtered = WhisperLyricsEngine.filterArtifacts(segments: [segment], audioDuration: 248)
+
+        XCTAssertEqual(filtered.map(\.text), ["Forever", "I"])
+    }
+
+    /// And it is spent on the TAKE, not on every segment: a low-confidence word opening the
+    /// second segment is judged by the floor like any other.
+    func testLaterSegmentsGetNoExemption() {
+        let first = [token("Forever", onset: 0.4, confidence: 0.06),
+                     token("I", onset: 0.9, confidence: 0.97)]
+        let second = [token("ghost", onset: 30.0, confidence: 0.05),
+                      token("real", onset: 30.4, confidence: 0.92)]
+
+        let filtered = WhisperLyricsEngine.filterArtifacts(segments: [first, second],
+                                                           audioDuration: 248)
+
+        XCTAssertEqual(filtered.map(\.text), ["Forever", "I", "real"])
+    }
+
+    /// The exemption must not resurrect a "Music" caption: rule (1) drops that whole segment
+    /// BEFORE the floor runs, and the opening exemption then belongs to the first real segment.
+    /// ("Highest Heaven" opens with a genuine `Music` caption at p=0.09.)
+    func testAMusicCaptionNeverBecomesTheExemptOpeningWord() {
+        let caption = [token("Music", onset: 0.1, confidence: 0.09)]
+        let firstReal = [token("Listen", onset: 4.0, confidence: 0.12),
+                         token("to", onset: 4.3, confidence: 0.95)]
+
+        let filtered = WhisperLyricsEngine.filterArtifacts(segments: [caption, firstReal],
+                                                           audioDuration: 275)
+
+        XCTAssertEqual(filtered.map(\.text), ["Listen", "to"],
+                       "the caption goes; the first REAL word inherits the exemption")
+    }
+
     func testNilConfidenceIsKept() {
         // Only the Whisper path sets confidence; a nil-confidence token has nothing to judge
         // it by and must survive the floor.

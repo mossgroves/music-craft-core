@@ -70,6 +70,33 @@ enum WhisperLyricsEngine {
     /// (which score higher) stay. Do not raise without re-scoring the six songs.
     static let ghostConfidenceFloor: Double = 0.15
 
+    /// THE TAKE'S FIRST WORD IS EXEMPT FROM THE FLOOR, and this is a measurement rather than a
+    /// kindness (2026-08-10, Chris: *"Forever analysis also lost the opening, first word of the
+    /// song"*).
+    ///
+    /// Whisper scores the first word of a take far lower than any other word, for reasons that
+    /// have nothing to do with whether it is real: after the prefill there is no left context to
+    /// condition on, and the opening syllable is usually caught mid-attack over a music bed.
+    /// Measured across the six scored songs, the take-opening word scores 0.06 / 0.09 / 0.18 /
+    /// 0.25 / 0.40 / 0.48 — median 0.215, against a corpus median of 0.98 for every other word.
+    /// **Two of six real opening words therefore fell under a floor drawn against hallucinations.**
+    /// On "1 Forever" the app printed "I have looked, forever I have found again" for a song that
+    /// begins "Forever I have looked"; on "CHRIS TRAVELERS" the opening "Oh" (p=0.06) went the
+    /// same way.
+    ///
+    /// The floor itself is untouched and still does its work — this exempts exactly ONE token,
+    /// the first surviving word of the whole take, and nothing else. The asymmetry is justified
+    /// because the two populations differ in a way the probability alone cannot express: a ghost
+    /// is a word invented over a region with no voice in it, while the take's opening word sits
+    /// at the very start of the singing. A hallucinated opener is possible; it costs one wrong
+    /// word at the top of a chart the songwriter is reading anyway, against losing the real first
+    /// word of every third song.
+    ///
+    /// Deliberately NOT extended to every segment's first token: segment-initial words score a
+    /// median 0.755 with only 6% under the floor, so they do not need it, and exempting ~158
+    /// tokens per song rather than one would hand the ghosts a door.
+    static let exemptsTakeOpeningWordFromFloor = true
+
     /// A LONE final token below this confidence, ending inside the last decode window of the
     /// audio, is the measured "you"-tail artifact (Whisper hallucinating a sign-off over the
     /// fade-out; observed repeatedly across the six scored songs). 0.30 per the BACKLOG's
@@ -178,10 +205,21 @@ enum WhisperLyricsEngine {
         // carry high probability (the model is confident it is captioning music).
         var kept = segments.filter { !isMusicCaptionSegment($0) }
 
-        // (2) Ghost-word floor, per token.
+        // (2) Ghost-word floor, per token — EXCEPT the take's own first word, which Whisper
+        // systematically under-scores for reasons unrelated to whether it was sung (see
+        // `exemptsTakeOpeningWordFromFloor` for the measurement). The exemption is spent on
+        // exactly one token in the whole take: the first token of the first segment that
+        // survives the caption filter.
+        var openingIsExempt = exemptsTakeOpeningWordFromFloor
         kept = kept
-            .map { segment in
-                segment.filter { ($0.confidence ?? 1.0) >= ghostConfidenceFloor }
+            .map { segment -> [TranscribedToken] in
+                var isFirstOfTake = openingIsExempt
+                openingIsExempt = false   // spent on the first segment we look at, kept or not
+                return segment.filter { token in
+                    defer { isFirstOfTake = false }
+                    if isFirstOfTake { return true }
+                    return (token.confidence ?? 1.0) >= ghostConfidenceFloor
+                }
             }
             .filter { !$0.isEmpty }
 
