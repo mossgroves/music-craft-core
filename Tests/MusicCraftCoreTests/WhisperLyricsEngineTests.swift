@@ -378,3 +378,61 @@ final class WhisperLyricsEngineTests: XCTestCase {
         XCTAssertFalse(TranscribedToken(text: "word", onsetTime: 0, duration: 0.3).startsSegment)
     }
 }
+
+// MARK: - The coverage gate + crawl containment (2026-08-12: the hour-long listen)
+
+/// Pure tests for the pieces that ended the sparse-audio decode grind and the hallucinated
+/// instrumental transcripts (populations measured over the 15-take corpus + wordless stem
+/// specimens; see the constants' doc comments).
+extension WhisperLyricsEngineTests {
+
+    private func tokensAt(_ count: Int, confidence: Double) -> [TranscribedToken] {
+        (0..<count).map {
+            TranscribedToken(text: "w\($0)", onsetTime: Double($0), duration: 0.3,
+                             confidence: confidence)
+        }
+    }
+
+    func testSparseWeakTranscriptOnALongTakeIsGated() {
+        // The measured hallucination shape: 13 words over 35 s at mean 0.43 (the clean
+        // instrumental stem specimen). Both clauses fail → gated.
+        let junk = tokensAt(13, confidence: 0.43)
+        XCTAssertFalse(WhisperLyricsEngine.passesCoverageGate(junk, audioDuration: 35.4))
+    }
+
+    func testDenseSingingPassesOnRate() {
+        // Broken Man 2026-08-11: 48 wpm at 0.76 — passes both clauses.
+        let dense = tokensAt(192, confidence: 0.76)
+        XCTAssertTrue(WhisperLyricsEngine.passesCoverageGate(dense, audioDuration: 238.1))
+    }
+
+    func testSparseButConfidentWordsPassOnConfidence() {
+        // Beauty All Around: 21.4 wpm (under the rate clause) at 0.82 — the confidence
+        // clause alone keeps a genuine sparse lyric.
+        let sparse = tokensAt(37, confidence: 0.82)
+        XCTAssertTrue(WhisperLyricsEngine.passesCoverageGate(sparse, audioDuration: 103.8))
+    }
+
+    func testShortTakesAreNeverGated() {
+        // Under the duration floor there is not enough audio to judge coverage honestly.
+        let few = tokensAt(3, confidence: 0.2)
+        XCTAssertTrue(WhisperLyricsEngine.passesCoverageGate(few, audioDuration: 20))
+    }
+
+    func testEmptyAndConfidencelessTranscriptsPassVacuously() {
+        XCTAssertTrue(WhisperLyricsEngine.passesCoverageGate([], audioDuration: 120))
+        let noConf = (0..<5).map {
+            TranscribedToken(text: "w\($0)", onsetTime: Double($0), duration: 0.3, confidence: nil)
+        }
+        XCTAssertTrue(WhisperLyricsEngine.passesCoverageGate(noConf, audioDuration: 120))
+    }
+
+    func testTokenOffsetRestoresFileAbsoluteTime() {
+        // The sliced decode hands each slice to WhisperKit separately; the mapper puts the
+        // slice's start back so downstream timing (charts, line breaks) stays file-absolute.
+        let words = [WordTiming(word: " home", tokens: [], start: 2.0, end: 2.5, probability: 0.9)]
+        let mapped = WhisperLyricsEngine.tokens(fromWords: words, offsetBy: 60)
+        XCTAssertEqual(mapped.first?.onsetTime, 62.0)
+        XCTAssertEqual(mapped.first?.duration ?? -1, 0.5, accuracy: 0.0001)
+    }
+}

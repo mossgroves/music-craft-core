@@ -66,19 +66,35 @@ public enum LyricsExtractor {
     ) async throws -> [TranscribedToken] {
         let localeIdentifier = locale ?? Locale.current.language.languageCode?.identifier ?? "en-US"
 
-        // Whisper-first when a model folder is provided. English-gated: the pinned decode config
-        // hard-codes language "en" (measured; see WhisperLyricsEngine) — a non-English request
-        // must not be silently decoded as English, so it goes straight to the Apple path.
+        // Whisper-first when a model folder is provided. English-gated on the REQUESTED locale:
+        // the shipping decode language is `configuration.transcriptionLanguage` (default "en",
+        // the measured configuration; nil = Whisper detection, plumbed 2026-08-12 but not yet
+        // the default anywhere — see the field's doc) — a non-English REQUEST still goes
+        // straight to the Apple path rather than being silently decoded as English. NOTE the
+        // known gap this gate cannot close: non-English SINGING under an English locale is
+        // decoded as English; closing it means flipping `transcriptionLanguage` to nil once
+        // non-English ground truth exists to measure against.
         // ANY Whisper failure (unloadable folder, missing tokenizer, decode error) falls through
         // to the Apple path below, which ships unchanged as the fallback floor.
         if let modelFolder = configuration?.whisperModelFolder,
            localeIdentifier.lowercased().hasPrefix("en") {
             do {
-                return try await WhisperLyricsEngine.transcribe(
+                let whisperTokens = try await WhisperLyricsEngine.transcribe(
                     buffer: buffer,
                     sampleRate: sampleRate,
-                    modelFolder: modelFolder
+                    modelFolder: modelFolder,
+                    language: configuration?.transcriptionLanguage ?? "en"
                 )
+                // AN EMPTY WHISPER RESULT CONSULTS THE APPLE PATH (2026-08-12). Empty means
+                // either genuine silence or the engine's coverage gate refusing a
+                // sparse-and-weak transcript as probable hallucination — and the gate is
+                // deliberately allowed to be strict BECAUSE this fallback exists: sparse
+                // garbled-but-real singing that Whisper cannot stand behind gets the second
+                // engine's independent reading (measured recovering 34 real tokens on a take
+                // Whisper gated), while true instrumentals get Apple's near-silence and the
+                // honest wordless flow. Falling through costs one Apple pass, only on takes
+                // that produced no usable Whisper words anyway.
+                if !whisperTokens.isEmpty { return whisperTokens }
             } catch {
                 // Deliberately swallowed: the Apple path is the documented recovery.
             }
@@ -374,14 +390,24 @@ public enum LyricsExtractor {
         /// failure falls back to Apple. Model download/placement/eviction is the app's job.
         public let whisperModelFolder: URL?
 
+        /// The language the Whisper path decodes as: a Whisper code ("en", "es", …) forced into
+        /// the prefill, or nil to let Whisper DETECT the sung language. Default "en" — the
+        /// measured configuration (2026-08-07 six-song validation was English-forced). Flipping
+        /// a library to detection is a QUALITY change that needs non-English ground truth to
+        /// measure first; the field exists so the consuming app can make that change without an
+        /// MCC release when its corpus is ready. Ignored by the Apple path (which uses `locale`).
+        public let transcriptionLanguage: String?
+
         public init(
             waitForFinalResult: Bool = true,
             includeConfidence: Bool = true,
-            whisperModelFolder: URL? = nil
+            whisperModelFolder: URL? = nil,
+            transcriptionLanguage: String? = "en"
         ) {
             self.waitForFinalResult = waitForFinalResult
             self.includeConfidence = includeConfidence
             self.whisperModelFolder = whisperModelFolder
+            self.transcriptionLanguage = transcriptionLanguage
         }
 
         public static let `default` = Configuration()

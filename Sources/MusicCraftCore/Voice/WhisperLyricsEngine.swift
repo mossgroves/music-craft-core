@@ -51,15 +51,42 @@ enum WhisperLyricsEngine {
     /// - `wordTimestamps` — per-word {start, end, probability}, the alignment payload.
     /// - NO initial prompt EVER (`promptTokens` stays nil): a title prompt measured a
     ///   56.7%-WER repetition catastrophe.
+    /// - `temperatureFallbackCount 0` — THE FALLBACK LADDER IS OFF (2026-08-12). WhisperKit's
+    ///   default re-decodes a window at up to six rising temperatures when the greedy pass fails
+    ///   its logprob/compression gates. That policy exists for SPEECH; on music it is a
+    ///   pathology: sparse, quiet or instrumental windows fail the gates on nearly every window,
+    ///   each retry costs a full decode, and the high-temperature decodes produce the junk the
+    ///   artifact filter then has to strip. Measured on a 2:00 sparse-vocal phone capture: the
+    ///   ladder ground 372 s on an iPhone 17 Pro Max and had not finished after 60 MINUTES on an
+    ///   M2 Max, where the greedy-only decode of the same file completes in seconds. Greedy-only
+    ///   is also the configuration the original mlx A/B validated (10.0% WER, deterministic,
+    ///   2026-08-07) — the fallback ladder was never part of the measured quality claim.
     /// Everything else stays at WhisperKit defaults (the validated configuration).
-    static func pinnedDecodingOptions() -> DecodingOptions {
+    ///
+    /// `language`: a Whisper language code ("en", "es", …) forced into the prefill, or nil to
+    /// let Whisper DETECT the sung language (`detectLanguage` + prefill). The shipping default
+    /// stays "en" end to end (`LyricsExtractor.Configuration.transcriptionLanguage`): detection
+    /// is plumbed but not flipped, because no non-English ground truth exists in the corpus yet
+    /// to measure it against — see the consuming app's BACKLOG.
+    static func pinnedDecodingOptions(language: String? = "en") -> DecodingOptions {
         var options = DecodingOptions()
-        options.language = "en"
+        if let language {
+            options.language = language
+        } else {
+            options.detectLanguage = true
+        }
         options.usePrefillPrompt = true
         options.skipSpecialTokens = true
         options.suppressTokens = nonSpeechSuppressTokens
         options.firstTokenLogProbThreshold = -100
         options.wordTimestamps = true
+        options.temperatureFallbackCount = 0
+        // Decode-length ceiling per window: the densest legitimately sung 30 s window in the
+        // corpus decodes to ~80 tokens (timestamps and punctuation included); 160 is a 2x
+        // margin. Junk repetition never emits end-of-text and otherwise runs to the model's
+        // 224 ceiling on EVERY pathological window - this cap halves what a junk window can
+        // cost while sitting far above anything real singing produces (2026-08-12).
+        options.sampleLength = 160
         return options
     }
 
@@ -141,39 +168,78 @@ enum WhisperLyricsEngine {
     static func transcribe(
         buffer: [Float],
         sampleRate: Double,
-        modelFolder: URL
+        modelFolder: URL,
+        language: String? = "en"
     ) async throws -> [TranscribedToken] {
         guard !buffer.isEmpty, sampleRate > 0 else { return [] }
 
         let pipe = try await PipelineStore.shared.pipeline(for: modelFolder)
         let audio = try resampleTo16k(buffer, sampleRate: sampleRate)
-        let results = try await pipe.transcribe(
-            audioArray: audio,
-            decodeOptions: pinnedDecodingOptions()
-        )
 
-        // Chunked decodes can return several results; segments sort by start time.
-        let segments = results.flatMap(\.segments).sorted { $0.start < $1.start }
-        let grouped = segments
-            .map { tokens(fromWords: $0.words ?? []) }
-            .filter { !$0.isEmpty }
+        // ── ONE SLICE, ONE DECODE (2026-08-12): the take is fed to WhisperKit in fixed
+        // window-sized slices, each its own `transcribe` call, timestamps offset back to
+        // file-absolute. WHY: WhisperKit's internal seek loop advances only to the END OF THE
+        // LAST SEGMENT it decoded, so a low-content window that emits a short junk segment
+        // advances the seek by a second or two instead of thirty — and a 2:00 sparse-vocal
+        // capture was measured decoding EIGHTY-odd crawling windows instead of four (372 s on
+        // an iPhone 17 Pro Max; over an hour on an M2 Max, sampled deep in the decode loop).
+        // Slicing makes the decode count `ceil(duration / 30)` BY CONSTRUCTION — a hard bound
+        // no audio content can defeat. Quality is untouched: the pinned config never conditions
+        // one window on another (no prompt tokens, no prompt cache), so windows were already
+        // independent; the only change is that window boundaries sit on a fixed grid instead
+        // of following segment ends, which costs at most a word straddling a slice boundary.
+        let sliceFrames = 30 * WhisperKit.sampleRate   // one Whisper window: 480_000 frames at 16 kHz
         let audioDuration = Double(buffer.count) / sampleRate
-        return filterArtifacts(segments: grouped, audioDuration: audioDuration)
+        var collected: [[TranscribedToken]] = []
+        var sliceStart = 0
+        while sliceStart < audio.count {
+            let sliceEnd = min(sliceStart + sliceFrames, audio.count)
+            let offsetSeconds = Double(sliceStart) / Double(WhisperKit.sampleRate)
+            // THE SLICE'S TOKEN BUDGET is the second half of the crawl containment (the slicing
+            // above is the first). WhisperKit's internal loop can still crawl WITHIN a slice
+            // (short junk segments advance the seek by seconds); once a slice has spent tokens
+            // enough for `sliceWindowBudget` full windows, the early-stop callback ends every
+            // further window after one token — and a window with no segments advances the seek
+            // by the FULL window, so the loop reaches the slice's end in a handful of cheap
+            // steps instead of dozens of full decodes. Legitimate singing never spends the
+            // budget (a dense 30 s of lyrics is well under one window's 224 tokens); only
+            // pathological repetition does, and its output is the junk the artifact filter
+            // strips anyway. No quality threshold is introduced: the pinned decode config,
+            // including the measured `firstTokenLogProbThreshold -100`, is untouched.
+            let counter = TokenBudgetCounter(budget: sliceWindowBudget * 160)
+            let results = try await pipe.transcribe(
+                audioArray: Array(audio[sliceStart..<sliceEnd]),
+                decodeOptions: pinnedDecodingOptions(language: language),
+                callback: { _ in counter.spendOne() }
+            )
+            let segments = results.flatMap(\.segments).sorted { $0.start < $1.start }
+            for segment in segments {
+                let mapped = tokens(fromWords: segment.words ?? [], offsetBy: offsetSeconds)
+                if !mapped.isEmpty { collected.append(mapped) }
+            }
+            sliceStart = sliceEnd
+        }
+
+        let filtered = filterArtifacts(segments: collected, audioDuration: audioDuration)
+        // The coverage gate LAST: it judges the surviving transcript as a whole.
+        return passesCoverageGate(filtered, audioDuration: audioDuration) ? filtered : []
     }
 
     // MARK: - Token mapping (pure)
 
     /// Map WhisperKit per-word timings to MCC's `TranscribedToken`.
     /// `WordTiming.word` carries Whisper's leading-space token convention (" word"), so text is
-    /// whitespace-trimmed; tokens that trim to empty are dropped. `start`/`end` are file-absolute
-    /// (WhisperKit adds the window seek offset before emitting — SegmentSeeker, verified v1.1.0).
-    static func tokens(fromWords words: [WordTiming]) -> [TranscribedToken] {
+    /// whitespace-trimmed; tokens that trim to empty are dropped. `start`/`end` are absolute
+    /// WITHIN THE CALL's audio (WhisperKit adds its window seek offset before emitting —
+    /// SegmentSeeker, verified v1.1.0); `offsetBy` restores file-absolute time for the sliced
+    /// decode (the slice's start in the whole take).
+    static func tokens(fromWords words: [WordTiming], offsetBy offset: TimeInterval = 0) -> [TranscribedToken] {
         words.compactMap { word in
             let text = word.word.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
             return TranscribedToken(
                 text: text,
-                onsetTime: TimeInterval(word.start),
+                onsetTime: TimeInterval(word.start) + offset,
                 duration: TimeInterval(max(0, word.end - word.start)),
                 confidence: Double(word.probability)
             )
@@ -243,6 +309,71 @@ enum WhisperLyricsEngine {
                                  startsSegment: index == 0)
             }
         }
+    }
+
+    /// How many full windows' worth of tokens one 30 s slice may spend before its remaining
+    /// windows are early-stopped (see the budget comment in `transcribe`). A healthy slice is
+    /// ONE window; two covers WhisperKit legitimately re-windowing once after a segment that
+    /// ends early. Structural, not tuned: 2 × 160 tokens is ~4× the densest sung 30 s
+    /// window in the corpus (~80 tokens).
+    static let sliceWindowBudget = 2
+
+    /// The early-stop ledger for one slice's decode: thread-safe because WhisperKit invokes
+    /// the progress callback from its decode context, not the caller's.
+    private final class TokenBudgetCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var remaining: Int
+        init(budget: Int) { remaining = budget }
+        /// Returns true while budget remains (continue decoding), false once spent (early-stop).
+        func spendOne() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            remaining -= 1
+            return remaining > 0
+        }
+    }
+
+    // MARK: - The coverage gate (pure)
+
+    /// A TRANSCRIPT MUST EARN ITS CLAIM TO BE WORDS (2026-08-12). A completely instrumental
+    /// 2:30 capture came back titled "it's a great" from ~10 hallucinated words that each
+    /// individually cleared the per-token ghost floor — no per-token rule can catch a take
+    /// whose words are sparse-and-weak AS A WHOLE. The gate judges the whole: on a take long
+    /// enough to judge (`coverageGateMinimumDuration`), a surviving transcript that is BOTH
+    /// thinner than `coverageGateMinWordsPerMinute` AND weaker than
+    /// `coverageGateMinMeanConfidence` is Whisper decorating an instrumental, and the honest
+    /// transcript is NO transcript — the wordless take flow (a sketch, a hum) already says the
+    /// right things. Both clauses must fail together: sparse-but-CONFIDENT words (a genuine
+    /// line in a long instrumental) and dense-but-mumbled singing both pass.
+    ///
+    /// Thresholds placed from the corpus populations, 2026-08-12 (capped decode, 15-take
+    /// corpus + wordless stem specimens): real sung takes measure (wpm, mean conf) of
+    /// (48.4, 0.76), (52.0, 0.72), (25.7, 0.58), (21.4, 0.82); hallucination over instrumental
+    /// audio measures (22.1, 0.43) on the clean stem specimen and ~4 wpm on the device's
+    /// instrumental capture. Every real take passes at least one clause with >=16% margin;
+    /// junk fails both. The gate's cost is deliberately LOW either way: the caller
+    /// (LyricsExtractor) treats an empty Whisper result as "consult the Apple path", so a
+    /// gated transcript is a second opinion, never a loss - which is what makes modest margins
+    /// acceptable for sparse garbled-but-real singing (measured (17.0, 0.28), gated, and
+    /// correctly recovered by the Apple path's own reading).
+    static let coverageGateMinimumDuration: TimeInterval = 30
+    static let coverageGateMinWordsPerMinute: Double = 25
+    static let coverageGateMinMeanConfidence: Double = 0.50
+
+    /// True when the surviving transcript stands as words; false → the caller returns [] and
+    /// the take reads honestly as wordless. Empty input passes vacuously (nothing to judge).
+    static func passesCoverageGate(
+        _ tokens: [TranscribedToken],
+        audioDuration: TimeInterval
+    ) -> Bool {
+        guard audioDuration >= coverageGateMinimumDuration, !tokens.isEmpty else { return true }
+        let wordsPerMinute = Double(tokens.count) / (audioDuration / 60)
+        let confidences = tokens.compactMap(\.confidence)
+        // No confidences at all → nothing to weigh the words with; the rate clause alone
+        // cannot convict (the Apple path never reaches here, but the contract stays honest).
+        guard !confidences.isEmpty else { return true }
+        let meanConfidence = confidences.reduce(0, +) / Double(confidences.count)
+        return wordsPerMinute >= coverageGateMinWordsPerMinute
+            || meanConfidence >= coverageGateMinMeanConfidence
     }
 
     /// True when every token in the segment normalizes to "music" (case-insensitive, ignoring
