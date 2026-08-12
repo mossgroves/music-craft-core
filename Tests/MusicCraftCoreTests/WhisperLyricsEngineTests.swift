@@ -435,4 +435,68 @@ extension WhisperLyricsEngineTests {
         XCTAssertEqual(mapped.first?.onsetTime, 62.0)
         XCTAssertEqual(mapped.first?.duration ?? -1, 0.5, accuracy: 0.0001)
     }
+
+    // MARK: - The slice decode ledger (the 2026-08-12 window cap)
+
+    /// Window transitions are detected by the progress token count DROPPING — WhisperKit
+    /// accumulates tokens within a window and resets for the next. Rising counts are one window.
+    func testWindowTransitionsAreCountedByTokenReset() {
+        let ledger = WhisperLyricsEngine.SliceDecodeLedger(tokenBudget: 1000, windowCap: 8)
+        var breaches = 0
+        ledger.onWindowCapBreached = { breaches += 1 }
+
+        // Window 1: tokens 1…4. Window 2: reset to 1, then 2. Window 3: reset to 1.
+        for count in [1, 2, 3, 4, 1, 2, 1] { _ = ledger.note(tokenCount: count) }
+
+        XCTAssertEqual(breaches, 0, "three windows is a healthy slice under a cap of eight")
+    }
+
+    /// The breach fires exactly once, at the first window past the cap — not on every window
+    /// after it. One cancel is all the decode task needs.
+    func testTheWindowCapBreachFiresExactlyOnce() {
+        let ledger = WhisperLyricsEngine.SliceDecodeLedger(tokenBudget: 1000, windowCap: 2)
+        var breaches = 0
+        ledger.onWindowCapBreached = { breaches += 1 }
+
+        // Five one-token windows: every count of 1 is a reset, so five transitions.
+        for _ in 0..<5 { _ = ledger.note(tokenCount: 1) }
+
+        XCTAssertEqual(breaches, 1)
+    }
+
+    /// The handler is installed AFTER the decode task exists, so a breach that lands in that
+    /// gap must fire the moment the handler arrives — a crawl must never slip through the
+    /// installation race.
+    func testABreachBeforeTheHandlerInstallsFiresOnInstall() {
+        let ledger = WhisperLyricsEngine.SliceDecodeLedger(tokenBudget: 1000, windowCap: 1)
+        for _ in 0..<3 { _ = ledger.note(tokenCount: 1) }   // breach with no handler yet
+
+        var breaches = 0
+        ledger.onWindowCapBreached = { breaches += 1 }
+
+        XCTAssertEqual(breaches, 1, "the stored breach fires on installation")
+    }
+
+    /// The token budget's early-stop verdict is unchanged by the ledger rebuild: true while
+    /// budget remains, false once spent — the pre-cap behavior, preserved.
+    func testTheTokenBudgetVerdictStillEarlyStops() {
+        let ledger = WhisperLyricsEngine.SliceDecodeLedger(tokenBudget: 3, windowCap: 8)
+
+        XCTAssertTrue(ledger.note(tokenCount: 1))
+        XCTAssertTrue(ledger.note(tokenCount: 2))
+        XCTAssertFalse(ledger.note(tokenCount: 3), "the third spend exhausts a budget of three")
+        XCTAssertFalse(ledger.note(tokenCount: 4), "and it stays spent")
+    }
+
+    /// A dense sung slice — one window, many tokens — never approaches the cap, whatever its
+    /// length in tokens. The cap is about window COUNT, not token count.
+    func testAHealthySliceNeverBreaches() {
+        let ledger = WhisperLyricsEngine.SliceDecodeLedger(tokenBudget: 1000, windowCap: 8)
+        var breaches = 0
+        ledger.onWindowCapBreached = { breaches += 1 }
+
+        for count in 1...300 { _ = ledger.note(tokenCount: count) }
+
+        XCTAssertEqual(breaches, 0)
+    }
 }

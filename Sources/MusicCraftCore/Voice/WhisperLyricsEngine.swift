@@ -206,16 +206,41 @@ enum WhisperLyricsEngine {
             // pathological repetition does, and its output is the junk the artifact filter
             // strips anyway. No quality threshold is introduced: the pinned decode config,
             // including the measured `firstTokenLogProbThreshold -100`, is untouched.
-            let counter = TokenBudgetCounter(budget: sliceWindowBudget * 160)
-            let results = try await pipe.transcribe(
-                audioArray: Array(audio[sliceStart..<sliceEnd]),
-                decodeOptions: pinnedDecodingOptions(language: language),
-                callback: { _ in counter.spendOne() }
-            )
-            let segments = results.flatMap(\.segments).sorted { $0.start < $1.start }
-            for segment in segments {
-                let mapped = tokens(fromWords: segment.words ?? [], offsetBy: offsetSeconds)
-                if !mapped.isEmpty { collected.append(mapped) }
+            // THE CRAWL IS CANCELLED, NOT OUTLASTED (2026-08-12). The budget below bounds what
+            // a window may COST; the ledger's window cap bounds how many windows the slice may
+            // OPEN, and its breach cancels the decode task — the only mechanism that reaches
+            // WhisperKit's seek loop (see `maxWindowsPerSlice` for the measured pathology: 345
+            // empty-text windows in 45 s of one near-silent slice, seek advancing <0.09 s per
+            // window, token budget spent to no effect). A wall-clock watchdog backs the window
+            // heuristic. A cancelled slice contributes nothing and the loop continues, so real
+            // singing in a take's OTHER slices survives a crawling one.
+            let ledger = SliceDecodeLedger(tokenBudget: sliceWindowBudget * 160,
+                                           windowCap: maxWindowsPerSlice)
+            let sliceAudio = Array(audio[sliceStart..<sliceEnd])
+            let options = pinnedDecodingOptions(language: language)
+            let decodeTask = Task {
+                try await pipe.transcribe(audioArray: sliceAudio,
+                                          decodeOptions: options,
+                                          callback: { progress in
+                                              ledger.note(tokenCount: progress.tokens.count)
+                                          })
+            }
+            ledger.onWindowCapBreached = { decodeTask.cancel() }
+            let watchdog = Task {
+                try await Task.sleep(nanoseconds: UInt64(sliceDecodeWallCap * 1_000_000_000))
+                decodeTask.cancel()
+            }
+            defer { watchdog.cancel() }
+            do {
+                let results = try await decodeTask.value
+                let segments = results.flatMap(\.segments).sorted { $0.start < $1.start }
+                for segment in segments {
+                    let mapped = tokens(fromWords: segment.words ?? [], offsetBy: offsetSeconds)
+                    if !mapped.isEmpty { collected.append(mapped) }
+                }
+            } catch is CancellationError {
+                // The slice was crawling; its decode was producing empty segments. It stands
+                // as wordless and the take moves on — this catch IS the bound.
             }
             sliceStart = sliceEnd
         }
@@ -318,17 +343,98 @@ enum WhisperLyricsEngine {
     /// window in the corpus (~80 tokens).
     static let sliceWindowBudget = 2
 
-    /// The early-stop ledger for one slice's decode: thread-safe because WhisperKit invokes
-    /// the progress callback from its decode context, not the caller's.
-    private final class TokenBudgetCounter: @unchecked Sendable {
+    /// HOW MANY WINDOWS one slice's internal seek loop may open before the slice is judged to
+    /// be crawling and its decode is CANCELLED (2026-08-12, the second half of the crawl fix —
+    /// the token budget alone turned out not to be a bound).
+    ///
+    /// THE MEASURED HOLE the cap closes: on the 2:00 sparse capture ("recorded at 9:09 PM",
+    /// the take the 0.1.12 slicing was built for), a near-silent 30 s slice decodes to an
+    /// EMPTY segment whose closing timestamp sits fractions of a second in — and WhisperKit's
+    /// seek advances only to that timestamp. Traced on a Mac (release, pinned config):
+    /// **345 windows opened in the first 45 s of ONE slice**, 4 callbacks each, empty text,
+    /// mean seek advance under 0.09 s per window. The token budget spent itself at ~window 80
+    /// and changed nothing, because a window's 3-4 prefill-token callbacks fire before the
+    /// early-stop can bite, and returning false from the callback ends only the CURRENT
+    /// window's token loop — the seek loop (upstream `TranscribeTask.swift:135-165`, v1.1.0)
+    /// is unreachable from the callback. Cancellation is the one lever that reaches it:
+    /// WhisperKit checks `Task.checkCancellation()` in the seek loop, the encoder, and the
+    /// decoder, so cancelling the slice's task stops the crawl within one window.
+    ///
+    /// The value is structural, not tuned: a healthy slice is 1-2 windows (the corpus decodes
+    /// 0.7-10.4 s per TAKE), a legitimately choppy sung slice a handful, and a crawling slice
+    /// hundreds. 8 is ~4× the legitimate re-window case and two orders of magnitude under the
+    /// pathology. A cancelled slice contributes NO tokens — on crawling audio the decode was
+    /// producing empty segments anyway, so nothing real is lost — and the take's other slices
+    /// decode normally, preserving any singing they hold.
+    static let maxWindowsPerSlice = 8
+
+    /// Wall-clock belt to the window cap's suspenders: a slice whose decode outlives this many
+    /// seconds is cancelled regardless of window count, so no pathology the window heuristic
+    /// misses can grind unbounded. A healthy slice decodes in ~1-4 s (Mac release and
+    /// iPhone 17 Pro Max both); 15 s is ~4× that worst case.
+    static let sliceDecodeWallCap: TimeInterval = 15
+
+    /// The per-slice decode ledger: spends the token budget (early-stopping windows once it is
+    /// gone, exactly as the old `TokenBudgetCounter` did) AND counts window transitions,
+    /// firing `onWindowCapBreached` once when the slice betrays the crawl. Window transitions
+    /// are detected by the progress token count dropping — WhisperKit accumulates tokens
+    /// within a window and resets for the next one.
+    ///
+    /// Thread-safe (`NSLock`) because WhisperKit invokes the progress callback from its decode
+    /// context, not the caller's; the breach handler is installed AFTER the decode task is
+    /// created, so `onWindowCapBreached`'s setter fires it immediately when the cap was
+    /// breached before installation (a 1.5 s-deep crawl by then — unlikely but free to handle).
+    /// Internal (not private) so the pure window/budget logic is testable via @testable.
+    final class SliceDecodeLedger: @unchecked Sendable {
         private let lock = NSLock()
-        private var remaining: Int
-        init(budget: Int) { remaining = budget }
-        /// Returns true while budget remains (continue decoding), false once spent (early-stop).
-        func spendOne() -> Bool {
-            lock.lock(); defer { lock.unlock() }
-            remaining -= 1
-            return remaining > 0
+        private var remainingTokens: Int
+        private let windowCap: Int
+        private var windowCount = 0
+        private var lastTokenCount = Int.max
+        private var breached = false
+        private var breachHandler: (() -> Void)?
+
+        init(tokenBudget: Int, windowCap: Int) {
+            remainingTokens = tokenBudget
+            self.windowCap = windowCap
+        }
+
+        var onWindowCapBreached: (() -> Void)? {
+            get { lock.lock(); defer { lock.unlock() }; return breachHandler }
+            set {
+                let fireNow: Bool
+                lock.lock()
+                breachHandler = newValue
+                fireNow = breached && newValue != nil
+                lock.unlock()
+                if fireNow { newValue?() }
+            }
+        }
+
+        /// One progress callback: notes a window transition when the token count resets,
+        /// fires the breach handler once at the cap, and returns the token-budget verdict
+        /// (true = keep decoding this window, false = early-stop it).
+        ///
+        /// `<=`, not `<`: within one window the count strictly RISES, so an equal count can
+        /// only be the next window resetting to the same value — which is exactly what the
+        /// post-budget regime produces (every early-stopped window emits one token: 1, 1, 1…).
+        /// A strict `<` would leave those windows invisible to the cap.
+        func note(tokenCount: Int) -> Bool {
+            var fire: (() -> Void)?
+            lock.lock()
+            if tokenCount <= lastTokenCount {
+                windowCount += 1
+                if windowCount > windowCap && !breached {
+                    breached = true
+                    fire = breachHandler
+                }
+            }
+            lastTokenCount = tokenCount
+            remainingTokens -= 1
+            let keepDecoding = remainingTokens > 0
+            lock.unlock()
+            fire?()
+            return keepDecoding
         }
     }
 

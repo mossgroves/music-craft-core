@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.13] - 2026-08-12
+
+### Fixed — the seek crawl is CANCELLED, not outlasted: the window cap the token budget wasn't
+
+0.1.12's slicing bounded the decode count ACROSS a take; inside one slice, WhisperKit's seek
+loop stayed unbounded, and the 2:00 sparse capture ("recorded at 9:09 PM") found the hole: a
+near-silent slice decodes an EMPTY segment whose closing timestamp sits fractions of a second
+in, the seek advances only that far, and the slice opens windows forever. Traced on a Mac
+(release, pinned config): **345 windows in the first 45 s of ONE slice**, 4 callbacks each,
+empty text, mean seek advance under 0.09 s per window — and the token budget spent itself at
+~window 80 to no effect, because returning `false` from the progress callback ends only the
+current window's token loop; the seek loop is unreachable from the callback.
+
+The fix is `SliceDecodeLedger`: it spends the token budget exactly as before AND counts window
+transitions (the progress token count resetting; `<=` not `<`, because post-budget windows emit
+one token each and never drop), cancelling the slice's decode `Task` at `maxWindowsPerSlice`
+(8 — a healthy slice is 1-2 windows, the crawl is hundreds). Cancellation is the one lever that
+reaches the seek loop: WhisperKit 1.1.0 checks `Task.checkCancellation()` there
+(`TranscribeTask.swift:135-165`). A wall-clock watchdog (`sliceDecodeWallCap`, 15 s) backs the
+heuristic. A cancelled slice contributes nothing — its decode was producing empty segments —
+and the take's other slices decode normally, so real singing elsewhere in the take survives.
+
+Measured (Mac, release, `take-probe` over the Sanctuary corpus, 2026-08-12):
+
+| take | before | after |
+|---|---|---|
+| "a recording" (the 2:00 sparse capture) | never completed (>8 min, killed) | **5.1 s wall, 60 real sung tokens** |
+| Broken Man / Sweet Mystery 2026-08-11 / Kill Devil Hills 2026-08-12 / Instrumental in D 2026-08-12 | — | tokens byte-identical to pre-fix |
+
+`WhisperLyricsEngineTests`: 35 executed / 0 failures, including five new `SliceDecodeLedger`
+tests (window counting, single-fire breach, the install-race, budget verdict, healthy-slice
+immunity).
+
+## [0.1.12] - 2026-08-12
+
+Retro-recorded 2026-08-12 (the release shipped as commit `e6c2d94` and Sanctuary's
+`Package.resolved` consumed it as 0.1.12; the tag and this entry were created after the fact).
+**The Whisper pass**: decode bounded by construction — fallback ladder off
+(`temperatureFallbackCount 0`), 30 s-sliced decode with a per-slice token budget, `sampleLength`
+160. The 2:00 sparse take that ground 372 s on device: 3.9 s. The **coverage gate** refuses
+sparse-and-weak transcripts whole (≥30 s, <25 wpm AND mean conf <0.50) and an empty Whisper
+result consults the Apple path. `transcriptionLanguage` plumbed (default "en"; nil = detection,
+not yet flipped anywhere). Full record: Sanctuary `HANDOFF-2026-08-12.md` and the 0.1.12 pin
+comment in Sanctuary's `project.yml`.
+
+## [0.1.11] - 2026-08-10
+
+Retro-recorded 2026-08-12 (shipped as commit `7560780`; tag and entry created after the fact).
+`TranscribedToken.startsSegment` — the recognizer's own segment boundaries survive the
+flattening into one token stream, giving Sanctuary's line-break menu the phrasing signal
+silence cannot provide on sung takes. Full record: the 0.1.11 pin comment in Sanctuary's
+`project.yml`.
+
+## [0.1.10] - 2026-08-10
+
+Retro-recorded 2026-08-12 (shipped as commit `98f0791`; tag and entry created after the fact —
+"Chris authorized the tag and push" is recorded in the pin comment; the tag step was missed).
+The take's OPENING WORD is exempt from the ghost-confidence floor: Whisper under-scores a
+take's first word (measured 0.06-0.48, median 0.215, vs corpus median 0.98) for reasons
+unrelated to whether it was sung, and two of six real openings fell under a floor drawn
+against hallucinations. Exactly one token is exempt; the floor is otherwise unchanged. Full
+record: the 0.1.10 pin comment in Sanctuary's `project.yml`.
+
 ## [0.1.9] - 2026-08-09
 
 ### Added — `LyricsExtractor.prepare(configuration:)`: warm the Whisper engine before it is needed
