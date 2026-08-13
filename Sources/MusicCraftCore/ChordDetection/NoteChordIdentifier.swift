@@ -161,6 +161,20 @@ public enum NoteChordIdentifier {
         return ctx.pcs[(r + 4) % 12] >= ctx.presenceFloor || ctx.pcs[(r + 3) % 12] >= ctx.presenceFloor
     }
 
+    /// True when ALL THREE tones of the MAJOR triad on `root` pass the presence floor of this
+    /// histogram. The relative-minor guard's evidence test: renaming a decoded minor run to its
+    /// relative major is only honest when the major triad the rename asserts is actually sounding
+    /// (`AudioExtractor.relativeMinorGuarded` asks this of a run's summed windows). Kept here, like
+    /// `thirdPasses`, so the presence-floor semantics live in exactly one place. Internal for the
+    /// same reason as `thirdPasses`.
+    static func majorTriadPresent(root: Int, weightedPitchClasses: [Double]) -> Bool {
+        guard let ctx = context(weightedPitchClasses: weightedPitchClasses, bassPitchClass: nil) else {
+            return false
+        }
+        let r = ((root % 12) + 12) % 12
+        return ChordQuality.major.intervals.allSatisfy { ctx.pcs[(r + $0) % 12] >= ctx.presenceFloor }
+    }
+
     /// Score + build the `.power` naming for `root` over this histogram (the bare-dyad guard's
     /// replacement chord). Uses the shared scoring formula so its confidence is comparable to the
     /// competing candidates'. Internal for the same reason as `thirdPasses`.

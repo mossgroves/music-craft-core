@@ -241,12 +241,17 @@ public enum AudioExtractor {
     ///  2. `ChordSequenceDecoder.decode` Viterbi-decodes the window sequence with a
     ///     self-transition-favoring switch penalty (the literature's single biggest chord lever), so a
     ///     momentary contamination is absorbed while sustained real changes still win;
-    ///  3. the **bare-dyad guard** (`bareDyadGuarded`) renames a decoded major/minor run to the power
+    ///  3. the **relative-minor guard** (`relativeMinorGuarded`, 2026-08-13) renames a SHORT decoded
+    ///     minor/minor7 run to its relative major when the minor root never holds the bass and the
+    ///     relative major earns the name (its triad sounding in the run, or an adjacent run already
+    ///     carrying it) — the relative-minor-for-major substitution killer (7 of 8 wrong chords and
+    ///     all 5 transition blips on the Rodanthe measurement);
+    ///  4. the **bare-dyad guard** (`bareDyadGuarded`) renames a decoded major/minor run to the power
     ///     chord ("E5") when NONE of its windows carries a sounding third AND the take has other
     ///     chords to judge it against — a standalone fifth dyad no longer asserts MAJOR (the
     ///     phantom-E killer). A dyad window absorbed INTO a neighboring chord's run keeps that context
     ///     label — deferring to context is the guard's other honest outcome;
-    ///  4. once a key is inferred from the decoded progression (chord-based only — a key needs a
+    ///  5. once a key is inferred from the decoded progression (chord-based only — a key needs a
     ///     progression to be trustworthy), a SECOND decode runs with a small non-diatonic penalty
     ///     (harmonic-minor V scored quasi-diatonic), so an artifact A-major inside A minor needs
     ///     genuine C♯ evidence while a real harmonic-minor E survives.
@@ -344,12 +349,162 @@ public enum AudioExtractor {
             i = j + 1
         }
 
+        // Relative-minor guard (run level) — see `relativeMinorGuarded`. Runs BEFORE the bare-dyad
+        // guard: a rename target always carries a sounding third (its evidence test requires one),
+        // so the dyad guard never re-fires on a renamed run.
+        let minorGuarded = relativeMinorGuarded(runs: runs, bins: bins, basses: basses,
+                                                scoreVectors: scoreVectors)
+
         // Bare-dyad guard (run level) — see `bareDyadGuarded`.
-        let guarded = bareDyadGuarded(runs: runs, bins: bins, basses: basses)
+        let guarded = bareDyadGuarded(runs: minorGuarded, bins: bins, basses: basses)
 
         // Clean up pick-attack/release edge transients and same-root sus/added flicker (0.1.1).
-        // Its re-collapse also merges adjacent runs the guard may have renamed to one name.
+        // Its re-collapse also merges adjacent runs the guards may have renamed to one name.
         return cleanupRuns(guarded, duration: duration)
+    }
+
+    /// Run-length ceiling for the relative-minor guard, in windows (0.5 s hop → ≤ ~1.5 s of audio).
+    /// Every wrong minor run in the 2026-08-13 Rodanthe measurement was 1–3 windows; the shortest
+    /// REAL minor call anywhere in the corpus that lacks its own bass (Kill Devil Hills' F♯m7 at
+    /// 13.5 s, F♯ bass throughout) is 4. Sustained minors are exactly the calls that scored 5/5,
+    /// so the guard never reads past this line.
+    static let relativeMinorGuardMaxWindows = 3
+
+    /// Bass-evidence bar for a short minor call: the minor ROOT must be the detected bass (the
+    /// window's lowest sounding note) in at least this many of the run's windows — at the 0.5 s hop,
+    /// two windows ≈ the root holding the bass for about a beat at this repertoire's tempos. Across
+    /// the 2026-08-13 corpus sweep every wrong minor run had 0 or 1 root-bass windows and every kept
+    /// real one had ≥ 2 (Kill Devil Hills' F♯m7 at 55.5 s: exactly 2; Romance de Amor's Am7: 8).
+    static let relativeMinorGuardMinBassWindows = 2
+
+    /// **The relative-minor guard (the 2026-08-13 Rodanthe fix).** Relative-minor-for-major
+    /// substitution was the measured dominant error class on Chris's capo-2 fingerpicked take:
+    /// 7 of 8 wrong chords and all 5 transition blips renamed a major to its relative minor —
+    /// A heard as F♯m(7), D as Bm(7) — while every sustained chord scored 5/5.
+    ///
+    /// **The mechanism (per-window evidence, `windbg` sweep 2026-08-13):** a transition window
+    /// BLENDS two adjacent majors (A: A-C♯-E ringing into D: D-F♯-A), and the relative minor 7 is
+    /// the four-note candidate that covers the blend best — F♯m7 = the whole A triad plus D's F♯ —
+    /// so it outscores either honest major on coverage alone. That is also why confidence cannot
+    /// filter it (wrong calls averaged 0.75 vs 0.78 for right ones, one wrong call at 0.96): the
+    /// coverage is genuinely high. The same sweep killed the weight-ratio idea — wrong runs reached
+    /// a minor-root/relative-root weight ratio of 0.87 (the F♯ is REAL, it belongs to D) while Kill
+    /// Devil Hills' genuine F♯m7 at 55.5 s sat at 0.28 (A-C♯-E over an F♯ bass). What separated
+    /// every wrong call from every real one was the BASS: a real short minor puts its root under
+    /// the chord for at least a beat; a substitution artifact never does (≤ 1 window, usually 0).
+    ///
+    /// A minor/minor7 run is therefore renamed to its relative major when ALL of:
+    ///  1. it is SHORT (≤ `relativeMinorGuardMaxWindows` windows — the defect's measured extent;
+    ///     sustained minors, which score 5/5, are structurally exempt);
+    ///  2. the minor ROOT is NOT bass-supported (fewer than `relativeMinorGuardMinBassWindows`
+    ///     windows with the root as the detected bass);
+    ///  3. the relative major actually EARNS the name, one of two ways:
+    ///     - **cover evidence**: the run's own summed histogram sounds the full relative-major
+    ///       triad (the blend case — needed because the substitution often STEALS the entire true
+    ///       segment, e.g. Rodanthe's chorus A at 45.5/51.5/63.5 s decoded wholly as F♯m7 flanked
+    ///       by D, so no relative-major neighbor exists to defer to); or
+    ///     - **a relative-major NEIGHBOR**: an adjacent run rooted on the relative major whose
+    ///       tones cover everything this run sounded beyond its claimed root (the dyad case —
+    ///       Rodanthe's D+F♯ windows decoded Bm with NO B sounding at all; renamed to the
+    ///       neighbor's own chord so the cleanup re-collapse absorbs the blip).
+    ///    Without either, the run is left alone — Romance de Amor's 0.5 s Em boundary blip sits on
+    ///    a B-dominated window with no D anywhere; renaming it to a G that is not in the piece
+    ///    would trade an in-key blip for an out-of-progression one.
+    ///
+    /// The rename prefers the neighbor's chord over the plain relative-major triad when both
+    /// qualify (context labels merge; a standalone segment only appears when the take really
+    /// changed chords there). Confidence is the run windows' own clamped candidate score for the
+    /// renamed chord — the shared scoring formula, comparable to every decoded run.
+    ///
+    /// **Never touches a sole run** (`runs.count >= 2`), same conservative posture as
+    /// `bareDyadGuarded` and `cleanupRuns` — which also keeps the single-chord bench fixtures
+    /// (GADA / TaylorNylon) structurally exempt.
+    ///
+    /// Measured 2026-08-13 (Mac, release, `take-probe`, scored against the songs' own sheets —
+    /// sheets are SHAPES at capo 2, scoring transposed to sounding):
+    ///  - **Rodanthe**: all 11 substituted minor segments gone (the 7 wrong chords AND the 5
+    ///    transition blips), each resolving to the sheet's sounding D/G/A; wrong-root events
+    ///    12 → 1 (the surviving one is a trailing 0.88 s Esus2 — a different defect class);
+    ///    event accuracy 34/46 (73.9%) → 37/38 (97.4%).
+    ///  - **Kill Devil Hills**: real Bm runs and both bass-holding F♯m7s kept; three 0.5 s F♯m7
+    ///    ring-over blips absorb into the A the sheet has there; key B minor → D major, matching
+    ///    the sheet's C-shape tonic at capo 2.
+    ///  - **Romance de Amor**: byte-identical — Am7 (0.64) and B7 (0.39) untouched.
+    ///  - **Broken Man**: ten 0.5 s Gm(7) ring-over blips (G is A♯'s 6th) absorb into the
+    ///    adjacent A♯; the bass-supported Gm7s at 9.0 s and 51.0 s stay, and three more stay
+    ///    for want of rename evidence; key C minor unchanged.
+    ///  - **Instrumental in D**: the 0.31-confidence Bm7 at 33.5 s absorbs into the D drone; the
+    ///    sustained Bm7 sections stay.
+    ///  - GADA / TaylorNylon single-chord benches: structurally exempt, numbers unchanged.
+    ///
+    /// Pure and internal so it is unit-testable without audio (`ChordSequenceDecoderTests`).
+    /// `bins[w]` / `basses[w]` / `scoreVectors[w]` are the window-`w` evidence the runs were
+    /// decoded from; window ranges are preserved so `bareDyadGuarded` still sees them.
+    static func relativeMinorGuarded(
+        runs: [(start: Double, chord: Chord, conf: Double, windows: ClosedRange<Int>)],
+        bins: [[Double]], basses: [Int?], scoreVectors: [[Double]?])
+        -> [(start: Double, chord: Chord, conf: Double, windows: ClosedRange<Int>)] {
+        guard runs.count >= 2 else { return runs }   // sole run: no context, never renamed
+
+        var out = runs
+        for (k, r) in runs.enumerated() {
+            guard r.chord.quality == .minor || r.chord.quality == .minor7,
+                  r.windows.count <= relativeMinorGuardMaxWindows else { continue }
+
+            // (2) Bass support: a real short minor holds its root in the bass; an artifact doesn't.
+            let m = r.chord.root.rawValue
+            let rootBassWindows = r.windows.filter { basses[$0] == m }.count
+            guard rootBassWindows < relativeMinorGuardMinBassWindows else { continue }
+
+            let relRoot = (m + 3) % 12
+
+            // (3a) Cover evidence: the full relative-major triad sounds in the run's summed windows
+            // AND the relative-major root touches the detected bass somewhere in the run. The triad
+            // test alone is not enough — a minor→minor boundary window also contains a relative-major
+            // triad (Romance de Amor's Em→Am handoff blends {E,G,B}+{A,C,E} ⊇ the C triad, and
+            // renaming that window to a C the piece never plays trades an honest boundary for an
+            // out-of-progression name). Every genuine substitution in the 2026-08-13 sweep had the
+            // relative-major root in the bass of at least one run window (it was the chord actually
+            // being played); the Romance boundary never does.
+            var summed = [Double](repeating: 0, count: 12)
+            for w in r.windows {
+                for pc in 0..<12 { summed[pc] += bins[w][pc] }
+            }
+            let relRootInBass = r.windows.contains { basses[$0] == relRoot }
+            let coverEvidence = relRootInBass
+                && NoteChordIdentifier.majorTriadPresent(root: relRoot, weightedPitchClasses: summed)
+
+            // (3b) A relative-major neighbor whose tones cover everything beyond the claimed root.
+            let upperTones = Set(r.chord.quality.intervals.dropFirst().map { (m + $0) % 12 })
+            var neighbor: Chord?
+            for nk in [k - 1, k + 1] where nk >= 0 && nk < runs.count {
+                let n = runs[nk].chord
+                guard n.root.rawValue == relRoot else { continue }
+                let neighborTones = Set(n.quality.intervals.map { (relRoot + $0) % 12 })
+                if upperTones.isSubset(of: neighborTones) { neighbor = n; break }
+            }
+
+            // Rename target: the neighbor's own chord when one qualifies (context labels merge),
+            // else the plain relative-major triad the cover evidence named.
+            let target: (root: NoteName, quality: ChordQuality)?
+            if let neighbor { target = (neighbor.root, neighbor.quality) }
+            else if coverEvidence { target = NoteName(rawValue: relRoot).map { ($0, .major) } }
+            else { target = nil }
+            guard let target,
+                  let qualityIndex = NoteChordIdentifier.candidateQualities.firstIndex(of: target.quality)
+            else { continue }
+
+            // Confidence from the shared formula: the run windows' clamped score for the new name.
+            let candidateIndex = target.root.rawValue * NoteChordIdentifier.candidateQualities.count + qualityIndex
+            let windowScores = r.windows.compactMap { scoreVectors[$0].map { min(1.0, max(0.0, $0[candidateIndex])) } }
+            let conf = windowScores.isEmpty ? r.conf : windowScores.reduce(0, +) / Double(windowScores.count)
+
+            let notes = target.quality.intervals.compactMap { NoteName(rawValue: (target.root.rawValue + $0) % 12) }
+            out[k] = (r.start,
+                      Chord(root: target.root, quality: target.quality, confidence: conf, notes: notes),
+                      conf, r.windows)
+        }
+        return out
     }
 
     /// **The bare-dyad guard (0.1.7).** A decoded major/minor run whose windows never sound EITHER

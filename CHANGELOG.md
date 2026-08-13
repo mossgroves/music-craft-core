@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.14] - 2026-08-13
+
+### Fixed — the relative minor no longer steals the major: a minor call must hold its own bass
+
+Relative-minor-for-major substitution was the dominant error class on the 2026-08-13 Rodanthe
+scoring (capo-2 fingerpicked take, scored against the song's own sheet, shapes transposed to
+sounding): **7 of 8 wrong chords and all 5 transition blips** renamed a major to its relative
+minor — A heard as F♯m(7), D as Bm(7) — always in-key, always on short segments at transitions,
+while every sustained chord scored 5/5. Confidence cannot filter it (wrong calls averaged 0.75
+vs 0.78 for right ones; one wrong call sat at 0.96).
+
+The mechanism (per-window evidence sweep): a transition window BLENDS two adjacent majors, and
+the relative minor 7 is the four-note candidate that covers the blend best — F♯m7 = the whole A
+triad plus D's F♯ — so it outscores either honest major on coverage alone, at honestly high
+confidence. What separated every wrong call from every real minor across the corpus was the
+**bass**: a real short minor holds its root under the chord for about a beat; an artifact never
+does (≤1 window, usually 0). The weight-ratio alternative failed on the same data — wrong runs
+reached a 0.87 minor-root/relative-root ratio while Kill Devil Hills' real F♯m7 sat at 0.28.
+
+The fix is `AudioExtractor.relativeMinorGuarded`, run-level like the 0.1.7 bare-dyad guard: a
+short (≤3-window) minor/minor7 run whose root never holds the detected bass for ≥2 windows is
+renamed to its relative major — but ONLY when the major earns the name, either by the full
+relative-major triad sounding in the run's summed windows WITH the relative-major root touching
+the bass, or by an adjacent run rooted on the relative major whose tones cover everything the
+run sounded beyond its claimed root. No evidence → no rename: Romance de Amor's Em→Am boundary
+keeps its honest Am7 rather than gaining a C the piece never plays. Sole runs and sustained
+minors are structurally exempt.
+
+Measured (Mac, release, `take-probe` over the Sanctuary corpus, 2026-08-13):
+
+| take | before | after |
+|---|---|---|
+| Rodanthe 2026-08-13 | 12 wrong-root events of 46 (73.9%) | **1 of 38 (97.4%)** — all 11 substituted minor segments gone, each resolving to the sheet's sounding D/G/A |
+| Kill Devil Hills | three 0.5 s F♯m7 ring-over blips; key B minor | blips absorb into the sheet's A; real Bm runs and both bass-holding F♯m7s kept; key **D major** — the sheet's C-shape tonic at capo 2 |
+| Romance de Amor | — | byte-identical: Am7 (0.64) and B7 (0.39) survive |
+| Broken Man | ten 0.5 s Gm(7) ring-over blips (G is A♯'s 6th) | absorbed into the adjacent A♯; bass-supported Gm7s at 9.0/51.0 s kept, three more kept for want of rename evidence; key C minor unchanged |
+| Instrumental in D | 0.31-confidence Bm7 inside the D drone | absorbed; sustained Bm7 sections kept |
+
+GADA / TaylorNylon single-chord benches unchanged (sole runs are never renamed, so the fixtures
+are structurally exempt). Eight new `ChordSequenceDecoderTests` pin the rule's keep AND rename
+sides, including the Romance boundary and the Bm7-inside-Bm carve-up the first draft of the
+cover test would have caused.
+
 ## [0.1.13] - 2026-08-12
 
 ### Fixed — the seek crawl is CANCELLED, not outlasted: the window cap the token budget wasn't
