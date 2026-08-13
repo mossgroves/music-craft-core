@@ -65,9 +65,13 @@ enum WhisperLyricsEngine {
     ///
     /// `language`: a Whisper language code ("en", "es", …) forced into the prefill, or nil to
     /// let Whisper DETECT the sung language (`detectLanguage` + prefill). The shipping default
-    /// stays "en" end to end (`LyricsExtractor.Configuration.transcriptionLanguage`): detection
-    /// is plumbed but not flipped, because no non-English ground truth exists in the corpus yet
-    /// to measure it against — see the consuming app's BACKLOG.
+    /// stays "en" (`LyricsExtractor.Configuration.transcriptionLanguage`), and any caller-forced
+    /// code now routes here regardless of locale (routing rule + measurement:
+    /// `LyricsExtractor.whisperDecodeLanguage`). DETECTION IS MEASURED BROKEN on sung audio and
+    /// the extractor never routes nil here (2026-08-13 Te Amo decode: detect 22/54 words vs
+    /// forced-es 49/54 vs forced-en 39/54 — wrong language per slice, transliterated mojibake,
+    /// a 21-glyph junk run). The nil branch stays so a future measured decision can reopen it
+    /// without an API change.
     static func pinnedDecodingOptions(language: String? = "en") -> DecodingOptions {
         var options = DecodingOptions()
         if let language {

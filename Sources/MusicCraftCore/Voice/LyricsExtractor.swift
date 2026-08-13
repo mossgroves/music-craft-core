@@ -6,10 +6,12 @@ import CoreMedia
 /// On-device lyric transcription wrapper. Produces timestamped word-level tokens for alignment
 /// with chord and melody timelines.
 ///
-/// Engine order (Sanctuary BACKLOG "Lyric transcription", GO 2026-08-07):
-/// 1. **WhisperLyricsEngine** (WhisperKit CoreML, whisper-small) — only when the consumer
-///    provides `Configuration.whisperModelFolder` AND the request is English (the pinned decode
-///    config was measured English-only). The quality path for SUNG material.
+/// Engine order (Sanctuary BACKLOG "Lyric transcription", GO 2026-08-07; language routing
+/// widened per the language-honesty spec, 2026-08-13):
+/// 1. **WhisperLyricsEngine** (WhisperKit CoreML, whisper-small) — when the consumer provides
+///    `Configuration.whisperModelFolder` AND the routing rule (`whisperDecodeLanguage`) names a
+///    decode language: any non-nil `transcriptionLanguage` code, with the original English-locale
+///    gate retained for the default "en". The quality path for SUNG material.
 /// 2. **Apple Speech** — the shipping fallback, taken when no model folder is set, the folder
 ///    doesn't hold a loadable model, or the Whisper decode throws. iOS 26+ uses the modern
 ///    **SpeechAnalyzer / SpeechTranscriber** path (per-word timing from the time-indexed result
@@ -66,24 +68,22 @@ public enum LyricsExtractor {
     ) async throws -> [TranscribedToken] {
         let localeIdentifier = locale ?? Locale.current.language.languageCode?.identifier ?? "en-US"
 
-        // Whisper-first when a model folder is provided. English-gated on the REQUESTED locale:
-        // the shipping decode language is `configuration.transcriptionLanguage` (default "en",
-        // the measured configuration; nil = Whisper detection, plumbed 2026-08-12 but not yet
-        // the default anywhere — see the field's doc) — a non-English REQUEST still goes
-        // straight to the Apple path rather than being silently decoded as English. NOTE the
-        // known gap this gate cannot close: non-English SINGING under an English locale is
-        // decoded as English; closing it means flipping `transcriptionLanguage` to nil once
-        // non-English ground truth exists to measure against.
-        // ANY Whisper failure (unloadable folder, missing tokenizer, decode error) falls through
-        // to the Apple path below, which ships unchanged as the fallback floor.
+        // Whisper-first when the routing rule names a decode language — the rule itself lives
+        // in `whisperDecodeLanguage` below (pure, unit-tested) with the 2026-08-13 Te Amo
+        // measurement that widened it beyond the original English-only gate.
+        // ANY Whisper failure (unloadable folder, missing tokenizer, decode error — including a
+        // language code the loaded model's tokenizer does not carry) falls through to the Apple
+        // path below, which ships unchanged as the fallback floor.
         if let modelFolder = configuration?.whisperModelFolder,
-           localeIdentifier.lowercased().hasPrefix("en") {
+           let decodeLanguage = whisperDecodeLanguage(
+               localeIdentifier: localeIdentifier, configuration: configuration
+           ) {
             do {
                 let whisperTokens = try await WhisperLyricsEngine.transcribe(
                     buffer: buffer,
                     sampleRate: sampleRate,
                     modelFolder: modelFolder,
-                    language: configuration?.transcriptionLanguage ?? "en"
+                    language: decodeLanguage
                 )
                 // AN EMPTY WHISPER RESULT CONSULTS THE APPLE PATH (2026-08-12). Empty means
                 // either genuine silence or the engine's coverage gate refusing a
@@ -120,6 +120,48 @@ public enum LyricsExtractor {
                 buffer: buffer, sampleRate: sampleRate, localeIdentifier: localeIdentifier, configuration: configuration
             )
         }
+    }
+
+    /// THE WHISPER ROUTING RULE, held as a pure function so the rule is unit-testable without a
+    /// model on disk. Returns the language code the Whisper path decodes as, or nil when the
+    /// request takes the Apple path instead.
+    ///
+    /// Measured basis (language-honesty spec; 2026-08-13 decode of the Te Amo take — Spanish
+    /// verses, English bridge): forced-es 49/54 words vs forced-en 39/54 vs detect 22/54.
+    /// English rides along under any forced language token (the English bridge came back
+    /// word-perfect under forced-es), so forcing the caller's language is safe even for
+    /// mixed-language songs. The rule, top to bottom:
+    ///
+    /// - **A non-English `transcriptionLanguage` routes to Whisper regardless of locale.** The
+    ///   field defaults to "en", so any non-English code is by construction the caller's explicit
+    ///   choice; the caller (not MCC) is responsible for it being a code the model's tokenizer
+    ///   carries — an unsupported code fails the decode and lands on the Apple fallback, never in
+    ///   a silent wrong-language decode.
+    /// - **"en" — the field's DEFAULT — keeps the original English-locale gate** (shipped
+    ///   2026-08-07): a non-English REQUEST under a default configuration still goes to the Apple
+    ///   path in its own locale rather than being silently decoded as English. That silent decode
+    ///   is the measured confidently-dishonest failure: forced-en hallucinated "I'm going to go
+    ///   to the hospital." for the Spanish opening "Te amo madre, amo tu medicina" at per-word
+    ///   confidences up to 0.99. Known edge, accepted: an EXPLICIT "en" is indistinguishable from
+    ///   the default, so explicit-en under a non-English locale also takes the Apple path — which
+    ///   is exactly the caller this gate exists to protect.
+    /// - **nil never routes to Whisper.** nil documents Whisper's own language DETECTION
+    ///   (plumbed 2026-08-12, `WhisperLyricsEngine` nil branch), and detection measured
+    ///   confidently dishonest on sung audio (2026-08-13: wrong language per slice, transliterated
+    ///   mojibake, a 21-glyph junk run; 22/54 on Te Amo). The engine plumbing stays for a future
+    ///   measured decision, but no request reaches it from here.
+    static func whisperDecodeLanguage(
+        localeIdentifier: String,
+        configuration: Configuration?
+    ) -> String? {
+        guard let configuration,
+              configuration.whisperModelFolder != nil,
+              let requested = configuration.transcriptionLanguage else { return nil }
+        if requested.lowercased() == "en" {
+            // The original 2026-08-07 gate, verbatim: English decode only for English requests.
+            return localeIdentifier.lowercased().hasPrefix("en") ? requested : nil
+        }
+        return requested
     }
 
     /// SFSpeechRecognizer path (iOS 17+ baseline, and the iOS 26 fallback floor). Builds the recognizer
@@ -391,11 +433,21 @@ public enum LyricsExtractor {
         public let whisperModelFolder: URL?
 
         /// The language the Whisper path decodes as: a Whisper code ("en", "es", …) forced into
-        /// the prefill, or nil to let Whisper DETECT the sung language. Default "en" — the
-        /// measured configuration (2026-08-07 six-song validation was English-forced). Flipping
-        /// a library to detection is a QUALITY change that needs non-English ground truth to
-        /// measure first; the field exists so the consuming app can make that change without an
-        /// MCC release when its corpus is ready. Ignored by the Apple path (which uses `locale`).
+        /// the prefill. Default "en" — the measured configuration (2026-08-07 six-song validation
+        /// was English-forced). Any NON-English code routes the request to Whisper regardless of
+        /// locale (the routing rule and its 2026-08-13 Te Amo measurement — forced-es 49/54 vs
+        /// forced-en 39/54 vs detect 22/54, English riding along under any language token — live
+        /// at `whisperDecodeLanguage`); "en" keeps the original English-locale gate. Picking WHICH
+        /// code to force is the consuming app's job (the model's own `tokenizer_config.json` is
+        /// the ground truth for supported codes — 99 for `openai_whisper-small`); an unsupported
+        /// code fails the decode and falls back to Apple.
+        ///
+        /// nil documents Whisper language DETECTION and is RETIRED as a routing option (the
+        /// 2026-08-13 measurement closed it: detection on sung audio picked wrong languages per
+        /// slice and emitted junk-glyph runs — confidently dishonest). nil never reaches Whisper;
+        /// the field stays Optional and the engine's detect plumbing stays in place so a future
+        /// measured decision can reopen it without an API change. Ignored by the Apple path
+        /// (which uses `locale`).
         public let transcriptionLanguage: String?
 
         public init(
