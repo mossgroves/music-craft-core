@@ -16,7 +16,9 @@ import CoreMedia
 ///    doesn't hold a loadable model, or the Whisper decode throws. iOS 26+ uses the modern
 ///    **SpeechAnalyzer / SpeechTranscriber** path (per-word timing from the time-indexed result
 ///    attributes, optional per-token confidence, on-device model asset installed on demand).
-///    iOS 17–25 — and any iOS 26 failure — use **SFSpeechRecognizer**, the fallback floor.
+///    iOS 17–25 — and any iOS 26 failure — use **SFSpeechRecognizer**, the fallback floor,
+///    which is PINNED ON-DEVICE (`requiresOnDeviceRecognition = true`, Chris 2026-08-17) and
+///    refuses to run when the locale has no on-device model. See `transcribeViaSFSpeechRecognizer`.
 ///    The Apple paths use system-managed language models; no model bundling by MCC.
 ///
 /// Whisper model MANAGEMENT (download, placement, eviction) is the consuming app's job; MCC
@@ -182,6 +184,22 @@ public enum LyricsExtractor {
             throw SpeechFrameworkError.frameworkUnavailable
         }
 
+        // ON-DEVICE OR NOT AT ALL (Chris, 2026-08-17).
+        //
+        // `SFSpeechRecognitionRequest.requiresOnDeviceRecognition` defaults to FALSE, which
+        // PERMITS Apple's servers to perform the recognition. The consuming app (Songcatcher)
+        // promises in its privacy letter that audio is "all understood here, never in the
+        // cloud", so this path is pinned on-device below. That pin is only honest if we refuse
+        // when the locale carries no on-device model: with the flag set and no local model the
+        // framework errors anyway, and this guard turns that opaque failure into a named one
+        // BEFORE any audio is copied into a request buffer.
+        //
+        // Failing here is the DESIRED outcome, not a degradation. The caller surfaces an honest
+        // "couldn't hear it" rather than the recording leaving the device to buy a transcript.
+        guard recognizer.supportsOnDeviceRecognition else {
+            throw SpeechFrameworkError.frameworkUnavailable
+        }
+
         return try await transcribeWithSFSpeechRecognizer(buffer: buffer, sampleRate: sampleRate, recognizer: recognizer, configuration: configuration)
     }
 
@@ -203,6 +221,10 @@ public enum LyricsExtractor {
         return try await withCheckedThrowingContinuation { continuation in
             let request = SFSpeechAudioBufferRecognitionRequest()
             request.shouldReportPartialResults = false
+            // THE PIN. Without this line the framework may ship the songwriter's audio to
+            // Apple for recognition (the property defaults to false). Availability is checked
+            // in `transcribeViaSFSpeechRecognizer` above, so this cannot fail silently here.
+            request.requiresOnDeviceRecognition = true
 
             let chunkFrames = max(1, Int(chunkSeconds * sampleRate))
             var offset = 0
