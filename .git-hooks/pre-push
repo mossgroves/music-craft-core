@@ -44,6 +44,17 @@ if [[ -n "$NEW_FAILURES" ]]; then
     exit 1
 fi
 
+# A build error must be judged BEFORE the allowlist: when swift test cannot build, no failure
+# parses, and an empty failure set would read as "every allowlisted test now passes" (seen
+# 2026-08-26: a concurrent build produced "input file ... was modified during the build" and the
+# hook demanded the GuitarSet entries be removed while both tests still failed).
+if [[ $TEST_EXIT -ne 0 && -z "$ACTUAL_FAILURES" ]]; then
+    echo "pre-push: BLOCKED — swift test exited $TEST_EXIT but no failures parsed."
+    echo "This usually means a build error. Run 'swift test' manually."
+    echo "$TEST_OUTPUT" | grep -E "error:" | head -5 | sed 's/^/  /'
+    exit 1
+fi
+
 if [[ -n "$FIXED_TESTS" ]]; then
     echo ""
     echo "pre-push: BLOCKED — tests in allowlist are now passing:"
@@ -51,12 +62,6 @@ if [[ -n "$FIXED_TESTS" ]]; then
     echo ""
     echo "Remove these entries from .git-hooks/known-failing-tests.txt"
     echo "(probably in the same commit that fixed them)."
-    exit 1
-fi
-
-if [[ $TEST_EXIT -ne 0 && -z "$ACTUAL_FAILURES" ]]; then
-    echo "pre-push: BLOCKED — swift test exited $TEST_EXIT but no failures parsed."
-    echo "This usually means a build error. Run 'swift test' manually."
     exit 1
 fi
 
