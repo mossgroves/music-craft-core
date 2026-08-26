@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 0.1.16 candidate
+## [0.1.16] - 2026-08-26
 
 ### Fixed — the Basic Pitch note decode was quadratic in the take length; it is now near-linear, with identical output
 
@@ -54,6 +54,14 @@ Tests: `BasicPitchTranscriberTests` gains three pure tests that pin the indexed 
 pre-0.1.16 full-grid scan (kept under `DEBUG` as `outputToNotesReferenceScan`) on grids with
 deliberate float ties and on quantised random grids, plus a direct tie-break test of
 `FrameMaxIndex`. 504 tests, 22 skipped, the same two allowlisted GuitarSet failures as before.
+
+## [0.1.15] - 2026-08-17
+
+### Fixed — the Apple transcription fallback is pinned on-device
+
+`LyricsExtractor`'s Apple-path fallback now requests on-device recognition explicitly, so the
+songwriter's audio never leaves the device on that path either (Sanctuary's privacy promise P2).
+Recorded here after the fact: the tag shipped without a changelog entry.
 
 ## [0.1.14] - 2026-08-13
 
