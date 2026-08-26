@@ -84,6 +84,134 @@ final class BasicPitchTranscriberTests: XCTestCase {
         XCTAssertEqual(a, b, "decoder must be deterministic on identical input")
     }
 
+    // MARK: - Pure: the indexed melodia trick must reproduce the full-grid scan, ties included
+    //
+    // 2026-08-26, Chris's 13:48 take: the note decode was superlinear. The fix replaces the
+    // per-candidate F × P argmax rescan with `BasicPitchDecoder.FrameMaxIndex`; the contract is
+    // that the (frame, pitch) sequence — and therefore every note — is unchanged, INCLUDING on
+    // exact float ties, which `np.argmax` (and the shipped scan) resolve to the lowest frame,
+    // then the lowest pitch. `outputToNotesReferenceScan` is the pre-0.1.16 decode kept under
+    // DEBUG as the oracle.
+
+    /// The index alone: equal maxima resolve to the lowest frame, and within a frame to the
+    /// lowest pitch; after a refresh that zeroes the winner, the next-lowest tie wins.
+    func testFrameMaxIndexBreaksTiesByLowestFrameThenLowestPitch() {
+        let nFrames = 37, nFreq = 88   // not a power of two: exercises the padding leaves
+        var grid = [[Double]](repeating: [Double](repeating: 0.1, count: nFreq), count: nFrames)
+        grid[20][30] = 0.9
+        grid[20][10] = 0.9    // same frame, lower pitch: must win within the frame
+        grid[5][60] = 0.9     // lower frame: must win overall
+        grid[36][0] = 0.9     // last frame, ties too
+        var index = BasicPitchDecoder.FrameMaxIndex(grid)
+        XCTAssertEqual(index.best.frame, 5)
+        XCTAssertEqual(index.best.value, 0.9)
+        XCTAssertEqual(index.pitch(of: 5), 60)
+        XCTAssertEqual(index.pitch(of: 20), 10)
+
+        grid[5][60] = 0
+        index.refresh(frames: 5 ..< 6, in: grid, changedPitches: 59 ... 61)
+        XCTAssertEqual(index.best.frame, 20)
+        XCTAssertEqual(index.pitch(of: 20), 10)
+
+        grid[20][10] = 0
+        index.refresh(frames: 20 ..< 21, in: grid, changedPitches: 9 ... 11)
+        XCTAssertEqual(index.best.frame, 20, "pitch 30 still holds 0.9 in frame 20")
+        XCTAssertEqual(index.pitch(of: 20), 30)
+
+        grid[20][30] = 0
+        index.refresh(frames: 20 ..< 21, in: grid, changedPitches: 29 ... 31)
+        XCTAssertEqual(index.best.frame, 36)
+        XCTAssertEqual(index.pitch(of: 36), 0)
+
+        // A refresh over a frame whose argmax pitch is outside the changed band is a no-op by
+        // construction (its maximum cell did not change), so the answer must not move.
+        grid[36][50] = 0
+        index.refresh(frames: 36 ..< 37, in: grid, changedPitches: 49 ... 51)
+        XCTAssertEqual(index.best.frame, 36)
+        XCTAssertEqual(index.best.value, 0.9)
+    }
+
+    /// Deliberate ties everywhere the scan could resolve them differently from a naive heap:
+    /// plateaus of equal energy, equal peaks in the same frame, equal peaks in adjacent pitches
+    /// (so the ±1-semitone zeroing of one erases the other), equal peaks in far frames, and
+    /// cells sitting EXACTLY on `frameThresh` (which is `>` to start a note but `<` to end one).
+    /// No onsets, so every note comes from the melodia trick.
+    func testIndexedMelodiaDecodeMatchesReferenceScanOnDeliberateTies() {
+        let nFrames = 400, nFreq = 88
+        var frames = [[Double]](repeating: [Double](repeating: 0, count: nFreq), count: nFrames)
+        let onsets = frames
+        func plateau(_ t0: Int, _ t1: Int, _ f: Int, _ v: Double) {
+            for t in t0 ..< t1 where t < nFrames { frames[t][f] = v }
+        }
+        plateau(10, 60, 40, 0.8)      // a note
+        plateau(10, 60, 41, 0.8)      // an equal note one semitone up: the first one's zeroing eats it
+        plateau(30, 90, 39, 0.8)      // equal, one semitone down, overlapping
+        plateau(100, 140, 20, 0.8)    // equal, far away: frame order decides
+        plateau(100, 140, 70, 0.8)    // equal, same frames, higher pitch
+        plateau(150, 155, 50, 0.95)   // too short to keep, still consumes energy
+        plateau(200, 260, 30, 0.3)    // exactly the threshold: never starts, but does not end
+        plateau(210, 215, 30, 0.31)   // one hair above: starts here, extends over the 0.3 plateau
+        plateau(300, 340, 60, 0.6)
+        plateau(305, 335, 61, 0.6)
+        plateau(310, 330, 62, 0.6)
+        plateau(350, 399, 87, 0.7)    // top edge pitch (no f+1 neighbour)
+        plateau(350, 399, 0, 0.7)     // bottom edge pitch (no f-1 neighbour)
+        frames[0][5] = 0.99           // frame 0: the backward pass never reaches it
+        frames[nFrames - 1][5] = 0.99 // last frame: the forward pass never reaches it
+
+        let a = BasicPitchDecoder.outputToNotes(frames: frames, onsets: onsets,
+                                                onsetThresh: 0.5, frameThresh: 0.3, minNoteLen: 5)
+        let b = BasicPitchDecoder.outputToNotesReferenceScan(frames: frames, onsets: onsets,
+                                                             onsetThresh: 0.5, frameThresh: 0.3, minNoteLen: 5)
+        XCTAssertEqual(a, b, "indexed decode diverged from the full-grid scan on a tie grid")
+        XCTAssertGreaterThanOrEqual(a.count, 6, "the tie grid should yield several notes: got \(a.count)")
+    }
+
+    /// Dense, quantised random grids (values on a 1/8 lattice, so ties are the norm) with random
+    /// onsets, across several seeds; this drives the refresh path through thousands of touched
+    /// frames. Deterministic generator so a failure is reproducible.
+    func testIndexedMelodiaDecodeMatchesReferenceScanOnQuantizedRandomGrids() {
+        struct SplitMix64 {
+            var state: UInt64
+            mutating func next() -> UInt64 {
+                state &+= 0x9E37_79B9_7F4A_7C15
+                var z = state
+                z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+                z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+                return z ^ (z >> 31)
+            }
+            mutating func unit() -> Double { Double(next() >> 11) / Double(1 << 53) }
+        }
+        let nFrames = 300, nFreq = 88
+        var totalNotes = 0
+        for seed in 1 ... 6 {
+            var rng = SplitMix64(state: UInt64(seed) &* 0x1234_5678_9ABC_DEF1)
+            var frames = [[Double]](repeating: [Double](repeating: 0, count: nFreq), count: nFrames)
+            var onsets = frames
+            for t in 0 ..< nFrames {
+                for f in 0 ..< nFreq {
+                    // Mostly quiet, with sustained runs so notes form; quantised to 1/8 steps.
+                    let u = rng.unit()
+                    frames[t][f] = u < 0.7 ? 0 : (Double(Int(rng.unit() * 8)) / 8.0)
+                    onsets[t][f] = rng.unit() < 0.02 ? Double(Int(rng.unit() * 8)) / 8.0 : 0
+                }
+            }
+            // Smear values along time so plateaus (and equal-valued neighbours) are common.
+            for t in 1 ..< nFrames {
+                for f in 0 ..< nFreq where frames[t][f] == 0 && rng.unit() < 0.6 {
+                    frames[t][f] = frames[t - 1][f]
+                }
+            }
+            let a = BasicPitchDecoder.outputToNotes(frames: frames, onsets: onsets,
+                                                    onsetThresh: 0.5, frameThresh: 0.3, minNoteLen: 3)
+            let b = BasicPitchDecoder.outputToNotesReferenceScan(frames: frames, onsets: onsets,
+                                                                 onsetThresh: 0.5, frameThresh: 0.3, minNoteLen: 3)
+            XCTAssertEqual(a, b, "seed \(seed): indexed decode diverged from the full-grid scan")
+            totalNotes += a.count
+        }
+        XCTAssertGreaterThan(totalNotes, 50, "the random grids should be note-rich: got \(totalNotes)")
+    }
+
     // MARK: - Model-dependent (skip if Core ML model load unavailable under the runner)
 
     private func makeTranscriberOrSkip() throws -> BasicPitchTranscriber {

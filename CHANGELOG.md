@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 0.1.16 candidate
+
+### Fixed — the Basic Pitch note decode was quadratic in the take length; it is now near-linear, with identical output
+
+2026-08-26, Chris's 13:48 take: a 13.8-minute recording was "still listening" after 15+ minutes
+on the phone. Measured on the Mac (`tools/take-probe`, release): a 72 s take decoded in 1.1 s but
+the 828 s take (3774 notes, 665 chord segments) took 95 s; `sample` put 6062 of 6062 samples in
+`BasicPitchDecoder.argmax2D`. The phone runs Debug from Xcode, where the same take extrapolated
+to about 40 minutes.
+
+The cause is structural in the upstream algorithm this port follows (`output_to_notes_polyphonic`,
+spotify/basic-pitch @ fa5997af): the "melodia trick" takes `np.argmax` over the WHOLE remaining-
+energy grid (F frames x 88 pitches) once per candidate, and the candidate count K grows with F, so
+the decode is O(K · F · P), quadratic in duration.
+
+The fix keeps the reference's greedy order and tie-breaking exactly (lowest frame, then lowest
+pitch, on equal energy) but finds each argmax from an index instead of a rescan:
+`BasicPitchDecoder.FrameMaxIndex` holds a per-frame maximum (value + first pitch) and a segment
+tree over frames whose root is the first frame holding the grid maximum. A candidate now costs
+O(log F) to find and O(extent · P) to retire (only the frames it zeroed are re-indexed, and only
+when the zeroed band contained the frame's argmax pitch, which is provably the only case where
+the frame's maximum can change). Memory is O(F), never an entry per cell. Public API unchanged.
+
+Byte-identity, 18 takes (the 17-take Sanctuary corpus plus the 828 s take), release, pre-edit
+source vs fixed source: `detectedNotes` byte-identical on all 18 in every run. `chordSegments`
+and everything downstream are byte-identical on all 18 once both binaries run with
+`SWIFT_DETERMINISTIC_HASHING=1`; with default hashing the SAME binary differs from itself run to
+run in the last ULP of chord confidences (17 of 18 takes, and one take flips 36/38 segments), a
+pre-existing Dictionary-order nondeterminism downstream of the notes (`ProgressionAnalyzer.inferKey`
+ties, already noted in TASKS.md and `ChordSequenceDecoder`), not a property of this change.
+
+Timing (Mac, release, `take-probe` pitch-only, extract seconds):
+
+| take | length | before | after |
+|---|---|---|---|
+| a recording 2 (the 13:48 take) | 828 s | 98.4 s | 3.5 s (28x) |
+| You Make My Heart Sing mix3 | 308 s | 18.3 s | 1.5 s |
+| 6 Human | 279 s | 13.6 s | 2.1 s |
+| 1 Forever | 248 s | 13.1 s | 3.3 s |
+| Love is on the Rise 2026-08-12 | 72 s | 1.13 s | 0.54 s |
+
+Debug (what the phone runs from Xcode; Mac, `take-probe` debug build, extract seconds): the 72 s
+take 27.5 s → 3.6 s; the 828 s take 42 s after, against pre-edit debug runs of the same file
+that took roughly an hour of CPU each (the app's "still listening for 15+ minutes").
+
+Tests: `BasicPitchTranscriberTests` gains three pure tests that pin the indexed decode to the
+pre-0.1.16 full-grid scan (kept under `DEBUG` as `outputToNotesReferenceScan`) on grids with
+deliberate float ties and on quantised random grids, plus a direct tie-break test of
+`FrameMaxIndex`. 504 tests, 22 skipped, the same two allowlisted GuitarSet failures as before.
+
 ## [0.1.14] - 2026-08-13
 
 ### Fixed — the relative minor no longer steals the major: a minor call must hold its own bass
