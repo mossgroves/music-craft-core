@@ -8,6 +8,6 @@ final class MusicCraftCoreTests: XCTestCase {
     /// (the pre-push hook makes forgetting this test impossible; forgetting Version.swift is
     /// still on the release step).
     func testVersionIsSet() {
-        XCTAssertEqual(musicCraftCoreVersion, "0.1.16")
+        XCTAssertEqual(musicCraftCoreVersion, "0.1.17")
     }
 }
