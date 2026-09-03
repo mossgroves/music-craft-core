@@ -138,6 +138,22 @@ enum WhisperLyricsEngine {
     /// The tail artifact was only ever observed in the final window over a no-vocal fade.
     static let trailingArtifactWindowSeconds: TimeInterval = 30
 
+    /// THE RUN GUARD (0.1.17, Chris's word 2026-09-02): a run of this many or more consecutive
+    /// tokens that fold to the same word is the decoder's repetition collapse, and the whole run
+    /// is dropped. Measured (Sanctuary `docs/audits/repetition-levers-2026-09-01.md`): applied
+    /// to the shipping output alone it took the seventeen-take mean from 80.3% to 43.1% WER,
+    /// level with Apple's decoder, and the six collapsed takes from 135.5% to 29.9%. Five is the
+    /// bar for the same reason it is the brake's: nothing he sings repeats a word five times
+    /// running except a vocalise, and the sheet never writes those out.
+    ///
+    /// CONVICT BY RUN, NEVER BY SHARED TIMESTAMP. The audit's pile signature (dozens of tokens on
+    /// one onset) looked like the cleaner rule and is the wrong one: the real verse that survives
+    /// BEHIND a loop on 6 Human carries the loop's timestamps too, and a pile rule takes it with
+    /// the junk (40.0% against 27.2% by run on that take). Runs are counted across segment
+    /// boundaries, because the brake caps a chant at five per segment and the model restarts it
+    /// in the next.
+    static let repetitionRunFloor = 5
+
     // MARK: - Warming
 
     /// LOAD THE PIPELINE WITHOUT TRANSCRIBING ANYTHING, so the first real transcription of a
@@ -277,8 +293,9 @@ enum WhisperLyricsEngine {
 
     // MARK: - Artifact filter (pure)
 
-    /// Strip the three measured Whisper-on-music artifacts (six-song on-device scoring,
-    /// 2026-08-07 — see BACKLOG "Lyric transcription", on-device validation paragraph):
+    /// Strip the four measured Whisper-on-music artifacts (six-song on-device scoring,
+    /// 2026-08-07 — see BACKLOG "Lyric transcription", on-device validation paragraph — and the
+    /// seventeen-take repetition audit, 2026-09-01):
     ///
     /// 1. **"Music" caption segments** — a segment whose every token is the word "Music"
     ///    (any case/bracketing) is Whisper captioning an instrumental intro/fade, not a lyric.
@@ -286,11 +303,14 @@ enum WhisperLyricsEngine {
     /// 2. **Ghost words** — tokens with word probability below `ghostConfidenceFloor` (0.15);
     ///    hallucinations over no-vocal regions measured at 0.03-0.19. Tokens with nil
     ///    confidence are kept (nothing to judge them by; only the Whisper path sets confidence).
-    /// 3. **The "you" tail** — a lone low-confidence final token ending inside the last decode
+    /// 3. **Repetition runs** — `repetitionRunFloor` (5) or more consecutive tokens folding to
+    ///    one word, counted across segment boundaries, are the decoder's collapse and are
+    ///    dropped whole. Confidence cannot catch this one: the loop's tokens carry 0.35 to 0.99.
+    /// 4. **The "you" tail** — a lone low-confidence final token ending inside the last decode
     ///    window of the audio (Whisper's fade-out sign-off hallucination).
     ///
     /// Pure function over already-mapped tokens grouped by Whisper segment; segment grouping
-    /// is required because artifacts (1) and (3) are segment-shaped, not token-shaped.
+    /// is required because artifacts (1) and (4) are segment-shaped, not token-shaped.
     /// Returns the surviving tokens flattened in segment order.
     static func filterArtifacts(
         segments: [[TranscribedToken]],
@@ -318,7 +338,12 @@ enum WhisperLyricsEngine {
             }
             .filter { !$0.isEmpty }
 
-        // (3) Trailing lone low-confidence token at end-of-audio.
+        // (3) Repetition runs, counted over the flattened stream so a chant the brake capped at
+        // five per segment and the model restarted in the next is one run, not several short
+        // ones. A token that folds to nothing (pure punctuation) breaks a run.
+        kept = droppingRepetitionRuns(kept)
+
+        // (4) Trailing lone low-confidence token at end-of-audio.
         if let lastSegment = kept.last,
            lastSegment.count == 1,
            let token = lastSegment.first,
@@ -337,6 +362,59 @@ enum WhisperLyricsEngine {
                                  duration: token.duration, confidence: token.confidence,
                                  startsSegment: index == 0)
             }
+        }
+    }
+
+    /// Rule (3) of `filterArtifacts`: drop every run of `repetitionRunFloor` or more consecutive
+    /// tokens (across segments, in stream order) that fold to one word, then drop any segment
+    /// emptied by it. Pure; segment membership of the survivors is unchanged.
+    ///
+    /// REPEATED TO A FIXED POINT, and this is a measurement rather than a nicety (2026-09-02, the
+    /// first harness run on 0.1.17): with the brake on, Highest Heaven's outro came back as
+    /// "yeah, oh oh oh oh oh oh, yeah, oh oh oh oh oh oh, yeah, …". One pass removes the "oh"
+    /// chants and leaves the eleven "yeah"s that stood between them touching, a wall of one word
+    /// again. Each pass removes at least `repetitionRunFloor` tokens, so it terminates.
+    static func droppingRepetitionRuns(_ segments: [[TranscribedToken]]) -> [[TranscribedToken]] {
+        var current = segments
+        while true {
+            let next = droppingRepetitionRunsOnce(current)
+            if next.map(\.count) == current.map(\.count) { return next }
+            current = next
+        }
+    }
+
+    /// One pass of rule (3). See `droppingRepetitionRuns` for why it is iterated.
+    static func droppingRepetitionRunsOnce(_ segments: [[TranscribedToken]]) -> [[TranscribedToken]] {
+        // Flatten with (segment, index) addresses so a run can be found across boundaries and
+        // removed from the segments it spans.
+        var addresses: [(segment: Int, index: Int, word: String)] = []
+        for (s, segment) in segments.enumerated() {
+            for (i, token) in segment.enumerated() {
+                addresses.append((s, i, RepetitionBrake.fold(token.text)))
+            }
+        }
+        var convicted = Set<Int>()   // positions in `addresses`
+        var start = 0
+        while start < addresses.count {
+            var end = start
+            let word = addresses[start].word
+            if !word.isEmpty {
+                while end + 1 < addresses.count, addresses[end + 1].word == word { end += 1 }
+            }
+            if end - start + 1 >= repetitionRunFloor {
+                for position in start...end { convicted.insert(position) }
+            }
+            start = end + 1
+        }
+        guard !convicted.isEmpty else { return segments }
+        var droppedAt: [Int: Set<Int>] = [:]
+        for position in convicted {
+            droppedAt[addresses[position].segment, default: []].insert(addresses[position].index)
+        }
+        return segments.enumerated().compactMap { s, segment -> [TranscribedToken]? in
+            guard let dropped = droppedAt[s] else { return segment }
+            let survivors = segment.enumerated().filter { !dropped.contains($0.offset) }.map(\.element)
+            return survivors.isEmpty ? nil : survivors
         }
     }
 
@@ -595,6 +673,14 @@ enum WhisperLyricsEngine {
                 download: false
             )
             let pipe = try await WhisperKit(config)
+            // THE REPETITION BRAKE rides every decode this pipeline makes (0.1.17). Installed
+            // here rather than through `WhisperKitConfig.logitsFilters` because its fold table
+            // needs the tokenizer, which exists only after the pipeline has loaded. WhisperKit
+            // prepends custom filters to its own (suppress-tokens, timestamp rules), so the
+            // pinned config is untouched. See `RepetitionBrake` for the measurement.
+            if let tokenizer = pipe.tokenizer {
+                pipe.textDecoder.logitsFilters = [RepetitionBrake(tokenizer: tokenizer)]
+            }
             cachedPath = folder.path
             cachedPipe = pipe
             return pipe

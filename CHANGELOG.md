@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.17] - 2026-09-02
+
+### Fixed — the Whisper path no longer hands back a wall of one word: a decode-time repetition brake and a run guard
+
+Whisper on sung material collapses into a chant on six of the seventeen takes in Sanctuary's
+corpus: 155 "oh" on Sweet Mystery, 159 "yeah" on Shadows, 78 "so" mid-verse on 6 Human,
+confidence climbing to 0.99. The artifact filter could not touch it (the loop's tokens carry
+0.35 to 0.99 and pile mid-track), and WhisperKit's own defence, the temperature ladder, was
+measured on all seventeen takes and refused: random run to run, it re-decodes a genuinely
+repeated hook into junk (Te Amo's `limpia` 9/9 to 1/9), makes two takes worse, and costs a
+third more decode time (Sanctuary `docs/audits/repetition-levers-2026-09-01.md`). Chris's word
+to build the two cheaper levers, 2026-09-02.
+
+**`RepetitionBrake`** (Voice/RepetitionBrake.swift), a `LogitsFiltering` object installed on the
+pipeline's text decoder at load. It folds the tokens decoded so far to bare words (case and
+punctuation dropped, using a fold table built once from the whole text vocabulary) and, once the
+same one-to-four-word block has been emitted five times in a row, sets every token id that folds
+to the continuing word to -inf. Deterministic, no re-decode. Measured in the audit with an
+id-level brake: byte-identical across two runs on all seventeen takes, no take worse than the
+greedy decode, every hook intact, decode time 21% lower, and Heart Sing's two lines the loop had
+eaten came back. The shipped brake folds case through a vocabulary table built once per pipeline
+load (about half a second, paid where the app already warms the model), which closes the " Oh,"
+versus " oh," escape the id-level version left open.
+
+**The run guard**, rule 3 of `WhisperLyricsEngine.filterArtifacts`: a run of
+`repetitionRunFloor` (5) or more consecutive tokens folding to one word, counted across segment
+boundaries, is dropped whole, and the pass repeats to a fixed point because removing a chant can
+leave the single words that stood between its repeats touching (Highest Heaven's outro came back
+as eleven "yeah" after one pass). It convicts by RUN and never by shared timestamp, because the
+real verse that survives behind a loop carries the loop's timestamps.
+
+Measured through the shipping path (`tools/lyric-wer/run-takes.sh`, seventeen takes, the same
+sheets and scorer as the audit), brake and guard together: mean 80.3% to **44.1%** WER (Apple's
+decoder 44.3%), the six collapsed takes 135.5% to **32.9%** (Apple 28.7%), six takes better and
+none worse, every hook held (`human` 11/12, `limpia` 9/9, `sing` 4/5 up from 3/5), zero piled
+tokens and no run longer than four on any take, determinism control identical, Whisper decode
+seconds 93.9 to 85.6 over the corpus with the fold-table load included. The pinned decode
+configuration is untouched. Public API unchanged. 18 tests (`RepetitionTests`,
+`RepetitionGuardSpecimenTests`).
+
 ## [0.1.16] - 2026-08-26
 
 ### Fixed — the Basic Pitch note decode was quadratic in the take length; it is now near-linear, with identical output
