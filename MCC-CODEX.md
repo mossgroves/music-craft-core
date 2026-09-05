@@ -4,7 +4,7 @@
 
 **Name:** MusicCraftCore (MCC)
 
-**Purpose:** A shared DSP, music theory, and audio analysis library consumed as a Swift Package dependency by Cantus, Guitar Atlas, Sanctuary, and other Mossgrove music apps. Extracted incrementally from Cantus with each release corresponding to a feature area.
+**Purpose:** Mossgrove's on-device music-analysis library (audio in, musical descriptors out) and music-theory layer, consumed as a Swift Package dependency. Extracted from Cantus in 2026-04 one subsystem per release; since 0.1.0 (2026-06-01) built on Spotify's Basic Pitch as the one note engine. Its live consumer is Songcatcher (Songwriter's Sanctuary). (Re-verified 2026-09-05 at 0.1.17; the Subsystems, Consumer Apps, Versioning Posture and Relationship sections below were corrected that day. The Capability Areas roadmap still carries its 2026-04 statuses and is marked so.)
 
 **Tagline:** Reusable algorithms and data for music understanding — portable across the studio.
 
@@ -30,13 +30,11 @@ The library serves the musician and the app builder equally. A musician using Ca
 
 ## Consumer Apps
 
-**Cantus** (primary, adopted 0.0.5) — Real-time pitch and chord detection for the guitar. Uses PitchDetector, ChromaExtractor, and ChordDetection subsystems. Wraps MCC's generic ChordDetector with CantusChordDetector for guitar-specific post-processing.
+**Songcatcher / Songwriter's Sanctuary** (the live consumer; pinned `from: "0.1.17"` in its `project.yml` since 2026-09-03) — uses `AudioExtractor` (chords, key, tempo, contour, notes), `BasicPitchTranscriber`, `LyricsExtractor` (Whisper + Apple fallback), `VocalIsolator`, `MelodyKeyInference`, `ProgressionAnalyzer`, the guitar voicing and capo types, and the theory value types. It uses AVFoundation directly for capture and playback (2026-04-22 decision), so MCC's Audio subsystem was never extracted.
 
-**Guitar Atlas** (secondary) — Chord reference and voicing library. Uses MusicTheory subsystem for chord spelling, interval calculation, and voicing generation.
+**Cantus** (the original source of the extraction; repo dormant since 2026-04-26) and **Guitar Atlas** (no repo of its own found on 2026-09-05) were the consumers MCC was designed for in 2026-04. Neither pins a current MCC.
 
-**Sanctuary** (pending) — Tonal analysis and meditation companion. Needs DSP (pitch, chroma) and AnalysisPipeline for offline audio analysis; does not need Audio subsystem (uses AVFoundation directly per 2026-04-22 decision).
-
-**Future apps** (Vocal App, Ear Training, and others) — will consume appropriate subsystems as they ship.
+**Frogsong** (working name; planning stage 2026-09-05) is expected to consume the existing public surface (Basic Pitch transcription, key inference, diatonic chord generation, per-note velocity) with no MCC API change; MCC has no pitch shifting and none is planned here.
 
 ## Architectural Boundary: Extraction vs. Interpretation
 
@@ -142,71 +140,39 @@ MCC's scope is organized into MIR task categories. Every item has a status indic
 
 ## Subsystems
 
-All subsystems ship as part of a single Swift Package. Consumers import `MusicCraftCore` and access subsystems by type. **Subsystems describe what currently exists in code; see Capability Areas (above) for the complete roadmap and status of all MCC scope including deferred and designed-but-unimplemented work.**
+All subsystems ship as one Swift Package; consumers import `MusicCraftCore`. **This section describes what exists in `Sources/` on 2026-09-05 at 0.1.17.** The 0.0.x DSP chord path (PitchDetector, ChromaExtractor, ChordDetector, IntervalDetector, ChordClassifierProvider, CanonicalChromaLibrary, ChromaTemplateLibrary, NoiseCalibrator) was DELETED at 0.1.0 (CHANGELOG "Removed"); the Capability Areas above still list some of it as shipped and should be read with that in mind.
 
-### MusicTheory (0.0.2–0.0.3)
+### MusicTheory (0.0.2–0.0.3, stable; 20 files)
 
-Value types: `Note`, `NoteName`, `Chord`, `ChordQuality`, `MusicalKey`, `KeyMode`, `Scale`, `ScaleMode`, `Interval`, `IntervalQuality`.
+Value types: `Note`, `NoteName`, `SpelledNote`, `Chord`, `ChordQuality`, `MusicalKey`, `RomanNumeral`, `ContourNote`, `DetectedNote`, `ParsonsCode`. Analysis: `ProgressionAnalyzer` (+KeyInference, +PatternRecognition over `ProgressionPattern` / `RecognizedPattern` / `SongReference`), `MelodyKeyInference` (Krumhansl profiles; 0.0.12 rewrite killed the relative-minor bias, 0.1.14 the relative-minor steal), `DiatonicChordGenerator`, `Transposer`, `TheoryReference` and the `music_theory.json` loader.
 
-Utilities: Note frequency/MIDI conversion, diatonic spelling (LetterName, Accidental, SpelledNote), chord parsing (`Chord.init?(parsing:)`), Roman numeral spelling (`RomanNumeral` with typed Degree/Accidental/Quality), transposition.
+### Transcription (0.0.14 → 0.1.0, the engine)
 
-Data: `music_theory.json` with circle of fifths, interval formulas, chord formulas, key detection heuristics.
+`BasicPitchTranscriber` (bundled Spotify Basic Pitch Core ML model, overlapping windows with seam trimming, near-linear decode since 0.1.16) and `BasicPitchDecoder`. Output: `TranscribedNote` (absolute MIDI, velocity; `pitchBend` is always nil today) and `PitchFrame`.
 
-**Status:** Stable. No breaking changes expected. Used by all downstream subsystems.
+### AnalysisPipeline (0.0.8, rebuilt 0.1.0)
 
-### DSP (0.0.4–0.0.5)
+`AudioExtractor.extract(url:)` / `extract(buffer:sampleRate:)`: one transcription feeds note-native chords, key (chord-based, melody fallback), tempo, the melodic-skyline `contour` and full-polyphony `detectedNotes`. `Result` and `ChordSegment` shapes are unchanged since 0.0.8; most of `Configuration` is vestigial (only `contourSource` is read).
 
-**PitchDetector** — YIN algorithm with Accelerate/vDSP optimization, confidence-weighted median filter, octave jump exemption, pitch jump detection.
+### ChordDetection (0.1.0 note-native)
 
-**ChromaExtractor** — FFT-based chroma extraction with 1/octave weighting, noise baseline calibration, spectral floor subtraction.
+`NoteChordIdentifier` (names a chord from a note set, with a per-quality prior) and `ChordSequenceDecoder` (Viterbi sequence decode, bare-dyad guard, key-aware second pass; 0.1.7).
 
-**CanonicalChromaLibrary** — 120 theoretical chord chroma templates (12 roots × 10 qualities: major, minor, 7, maj7, m7, dim, aug, sus2, sus4, m(maj7)). Conforms to ChromaTemplateLibrary protocol.
+### DSP (tempo only)
 
-**ChromaTemplateLibrary protocol** — Injection point for custom template libraries. Consumer apps can provide recording-derived or tuning-specific templates.
+`SpectralFluxOnsetDetector` (0.0.11), `BeatTracker`, `TempoEstimator`, `TempoEstimate`, `TempoHistogram`, `DSPUtilities` (windows, FFT helpers used by tempo).
 
-**DSPUtilities** — Window functions (Hann, Blackman), FFT wrapper, helpers for log2 ceiling and window application.
+### Instruments/Guitar (0.0.10)
 
-**Status:** Public and stable (0.0.5). All DSP types are public and consumable from external packages. No regressions in dependent apps.
+`VoicingLibrary` (chords-db, MIT), `GuitarVoicing`, `VoicingPosition`, `VoicingScore`, `CapoCalculator`, `GuitarTuning`.
 
-### ChordDetection (0.0.6–0.0.6.1)
+### Voice (0.0.9, rebuilt 0.1.6–0.1.17)
 
-**ChordDetector** — Multi-path chord recognition from chroma vectors using template library matching with multi-path agreement scoring. Tuning knobs: silence calibration, spectral floor, energy gate, confidence fallback, agreement boost factors.
+`LyricsExtractor` routes to `WhisperLyricsEngine` (WhisperKit 1.1.0, whisper-small, pinned decode config, artifact filter with the run guard, `RepetitionBrake` on the decoder since 0.1.17) when a model folder is supplied, else to Apple Speech (SpeechAnalyzer on iOS 26+, SFSpeechRecognizer below, pinned on-device since 0.1.15). `TranscribedToken` carries timestamps and confidence. `VocalIsolator` (0.1.8) renders a separated voice offline for contour tracing only.
 
-**IntervalDetector** — Interval-based chord detection extracting root and quality from peak-based chroma analysis. Root finding via harmonic series analysis; quality detection via interval presence scoring.
+### Audio
 
-**ChordClassifierProvider protocol** — Injection point for ML-based or recording-derived classifiers (complementary to template-matching paths).
-
-**Status:** Public (0.0.6.1). Public initializers added; calibration state audit pending (known gap from Cantus adoption attempt 2026-04-22).
-
-### ProgressionAnalyzer (0.0.7)
-
-**RomanNumeral** — Typed value type with nested Degree (1-7), Accidental, Quality enums. Supports diatonic and borrowed chord spelling (♭II, ♭III, ♭VI, ♭VII, ♯IV). displayString property produces canonical forms (I, i, ♭VII, iiø7, etc.).
-
-**SongReference** — Value type for citing song examples in pattern libraries. Title, artist, detail fields.
-
-**ProgressionPattern** — Well-known chord progressions with numerals, description, and song examples. Static library of 15 patterns.
-
-**RecognizedPattern** — Recognition result: pattern, match type (exact/similar), pass-through accessors for pattern metadata.
-
-**ProgressionAnalyzer** — Stateless public enum with `inferKey(from:)` and `recognizePattern(progression:in:)` static methods.
-- **KeyInference:** 24-key diatonic-fit scoring with 6 configurable heuristic weights (first-chord bias, quality alignment, tonic frequency, V→I cadence, IV→I cadence, minor bVII→i).
-- **PatternRecognition:** Exact and fuzzy matching (≥3 matches, ≥50% match rate, ±1 length tolerance) on (degree, accidental) pairs.
-
-**Status:** Shipped 0.0.7 (2026-04-24). 143 tests passing. No warnings.
-
-### AnalysisPipeline (pending 0.0.8)
-
-**AudioExtractor** — Stateless offline fragment analysis returning chord progression, key, tempo, and pitch contour from an audio file URL. Orchestrator subsystem combining DSP, ChordDetection, and ProgressionAnalyzer.
-
-**Contour API** — Per-note pitch tracking with onset time (absolute seconds), duration, Parsons code, and signed-semitone steps. Consumers derive IOI ratios or use absolute timings for display/sync.
-
-**Status:** Design phase. Uses diagnosis-plan-execute pattern (design spec → peer review → phased implementation with intermediate ergonomics test).
-
-### Audio (deferred from 0.0.9)
-
-Engine setup, adaptive noise gate, audio file reading.
-
-**Status:** Deferred. Sanctuary confirmed it uses AVFoundation directly (2026-04-22). May resurrect in later extraction if consumer apps need it.
+Never extracted. The `Sources/MusicCraftCore/Audio/` folder is empty. Consumers own capture, playback and the audio session.
 
 ## API Design Decisions
 
@@ -228,6 +194,8 @@ Engine setup, adaptive noise gate, audio file reading.
 
 ## Versioning Posture
 
+**Where it stands (2026-09-05):** 0.1.17. The 0.1.0 line began on 2026-06-01 when Basic Pitch replaced the DSP path, not when "extraction completed"; releases since have been additive on the public surface, and every release moves `Version.swift` and its test together through `scripts/release.sh`. Tags are 3-part SemVer only (the 4-part tags 0.0.6.1, 0.0.10.1, 0.0.12.1 were unresolvable by SwiftPM and had to be re-cut). The paragraphs below are the 2026-04 plan, kept as history.
+
 **0.0.x during extraction** — Semantic versioning: 0.0.7 = fourth subsystem shipped (ProgressionAnalyzer). Each release extracts one feature area from Cantus, ships with full test coverage, and is validated in consumer app adoption.
 
 **0.1.0 when extraction complete** — All planned subsystems (MusicTheory, DSP, ChordDetection, ProgressionAnalyzer, AnalysisPipeline, and optionally Audio) shipped and adopted by at least one consumer app.
@@ -247,7 +215,7 @@ Engine setup, adaptive noise gate, audio file reading.
 
 3. **Sendable audit for legacy types.** Some MusicTheory types (Chord, ChordQuality, others) may not have explicit Sendable conformance. Audit and backfill needed to ensure all public types are Sendable-safe. PublicAPITests should verify all public types pass Sendable compile checks.
 
-4. **Calibration state parity** — ChordDetection's calibration state differs from Cantus's pre-0.0.6 local ChordDetector. Open question for Cantus re-adoption after 0.0.7 ships. See decisions/0002-chorddetection-calibration.md (pending).
+4. ~~**Calibration state parity**~~ — OVERTAKEN 2026-06-01: `ChordDetector` and its calibration were deleted at 0.1.0; there is nothing to reconcile.
 
 5. **Whether to wrap Apple's Speech framework (LyricsExtractor)** at the SFSpeechRecognizer or SpeechAnalyzer level — SFSpeechRecognizer is iOS 17+ baseline; SpeechAnalyzer is iOS 26+ and more capable. Resolved when LyricsExtractor is designed (0.0.9 or later).
 
@@ -256,10 +224,10 @@ Engine setup, adaptive noise gate, audio file reading.
 ## Relationship to Other Mossgrove Docs
 
 - **MOSSGROVE-LORE.md** — Portfolio-wide philosophy and design principles. MCC embodies "Privacy First," "Atomic" (focused), "Fully Local," and "Simplicity" principles.
-- **Cantus TECHNICAL-ARCHITECTURE.md** — Cantus should reference MCC's subsystems as shared dependencies, not reimplementations. CantusChordDetector wrapping MCC.ChordDetector is the canonical integration pattern.
+- **Songcatcher TECHNICAL-ARCHITECTURE.md** ("Dependency shape" and the MCC consumption row) — the live record of what the consumer takes from MCC and at which pin. (Cantus is dormant since 2026-04-26 and the `CantusChordDetector` pattern named here in 2026-04 refers to a type deleted at 0.1.0.)
 - **Guitar Atlas and Sanctuary CODEXes** — Will define how they consume MusicTheory and DSP subsystems respectively.
 - **CLAUDE.md in this repo** — Operational manual for Claude Code sessions. Contains decision classification (green/yellow/red), file locations, test conventions, and session continuity patterns.
-- **Workspace coordination** — `/Users/chris/Documents/Code/mossgroves-claude-workspace/mcc.md` tracks consumer adoption status, open blockers, and interproject dependencies.
+- **Cross-repo work** — one Claude Code session edits MCC and Songcatcher together (single-session model, 2026-06-16); the consumer's `.claude/skills/mcc-release/SKILL.md` is the release-and-consume checklist. The `mossgroves-claude-workspace` mailbox is retired and is neither read nor written.
 
 ## Known Limitations and Deferred Work
 
