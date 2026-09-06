@@ -136,14 +136,14 @@ Two tiers, and in BOTH the tag and the push are Chris's word.
 1. The change is committed with its tests. The CHANGELOG entry is written and committed: `## [0.1.18] - YYYY-MM-DD` then `### Fixed — <title>` (the script reads the title after the em dash).
 2. `scripts/release.sh 0.1.18 --dry-run`, read every line; then `RELEASE_TRAILERS=$'Co-Authored-By: …\nClaude-Session: …' scripts/release.sh 0.1.18`. It checks SemVer, that the version is greater than `Version.swift`, that no such tag exists, that the branch is main and the tree clean, that the CHANGELOG heading exists, runs `swift test` against the allowlist, bumps `Version.swift` and `testVersionIsSet` together, commits `release: 0.1.18 — <title>`, and STOPS. It never tags or pushes.
 3. Report the version, title, test summary, commit sha and the printed commands; ask for the word.
-4. On his word, exactly as printed: `git tag -a …`, `git push origin main`, `git push origin 0.1.18`. TWO pushes: the pre-push hook exits 0 on the first non-main ref it reads, so `git push origin main 0.1.18` skips the suite (TASKS.md item 0, open; seen on 0.1.14).
+4. On his word, exactly as printed: `git tag -a …`, `git push origin main`, `git push origin 0.1.18`. Two pushes remain the printed shape; since 2026-09-06 the hook runs the suite whenever any pushed ref targets main, so a combined `git push origin main 0.1.18` no longer bypasses it (TASKS.md item 0, fixed).
 5. The consume happens in the app (pin bump, `xcodegen generate`, resolve, the app's `verify-build`, its doc-sync); the app commit is HELD for Chris's device look.
 
 Why the script exists: 0.1.9 through 0.1.15 shipped with `Version.swift` still reading 0.1.8 because the tag was cut without a check. `testVersionIsSet` and the script make the two files move together.
 
 ## The pre-push hook
 
-`.git-hooks/pre-push` (symlinked into `.git/hooks` by `.git-hooks/install.sh`, run once per clone) runs `swift test` on every push to main and BLOCKS on a new failure AND on an allowlisted test that now passes (remove its entry in the same commit that fixed it). A build error is judged before the allowlist: nonzero exit with no parsed failures is "nothing ran", not "everything passes" (2026-08-26). Allowlisted today: the two GuitarSet benchmarks (`GuitarSetProgressionTests`, `GuitarSetKeyInferenceTests`), deliberate, "do not lower".
+`.git-hooks/pre-push` (symlinked into `.git/hooks` by `.git-hooks/install.sh`, run once per clone) runs `swift test` on every push to main and BLOCKS on a new failure AND on an allowlisted test that now passes (remove its entry in the same commit that fixed it). A build error is judged before the allowlist: nonzero exit with no parsed failures is "nothing ran", not "everything passes" (2026-08-26). Since 2026-09-06 the ref loop no longer exits on the first non-main ref: the suite runs when any pushed ref targets main. Allowlisted today: the two GuitarSet benchmarks (`GuitarSetProgressionTests`, `GuitarSetKeyInferenceTests`), deliberate, "do not lower".
 
 ## Known Constraints and Gotchas
 
