@@ -29,3 +29,29 @@ Derived work: MusicCraftCore's Swift `BasicPitchTranscriber` re-implements Basic
 Pitch's note-decoding algorithm (output_to_notes_polyphonic, get_infered_onsets,
 constrain_frequency, model_frames_to_time) and a resampler in Swift. No upstream
 Python is vendored or executed. See docs/security/basic-pitch-2026-05-31.md.
+
+------------------------------------------------------------------------
+chords-db (David Rubert) — bundled guitar-voicing data
+------------------------------------------------------------------------
+
+Component:   chords-db guitar voicings (JSON), David Rubert, 2016.
+Source:      https://github.com/tombatossals/chords-db
+License:     MIT — full text bundled at Sources/MusicCraftCore/Resources/chords_db_LICENSE.txt
+Use:         Sources/MusicCraftCore/Resources/chords_db_guitar.json, decoded at runtime by
+             VoicingLibrary. Ships in-bundle so a consuming app can surface the licence.
+
+------------------------------------------------------------------------
+WhisperKit (Argmax) — linked Swift package dependency
+------------------------------------------------------------------------
+
+Component:   WhisperKit 1.1.0 (with its ArgmaxCore target), Argmax, Inc.
+Source:      https://github.com/argmaxinc/WhisperKit   (Package.swift pins exact: "1.1.0")
+License:     MIT — the licence text ships in the package checkout (LICENSE), not as an MCC
+             resource; a consuming app vendors it for its own acknowledgements screen
+             (Songcatcher does, under Sanctuary/Resources/Licenses/).
+Use:         Voice/WhisperLyricsEngine.swift and Voice/RepetitionBrake.swift. No model weights
+             are bundled; the consuming app downloads and manages the openai_whisper-small
+             folder. Linked into every consumer of MusicCraftCore, whether or not it calls
+             LyricsExtractor.
+
+(Sections for chords-db and WhisperKit added 2026-09-05; README.md had said NOTICE listed them.)

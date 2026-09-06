@@ -99,7 +99,7 @@ README.md · CHANGELOG.md · MCC-CODEX.md · TASKS.md · CLAUDE.md · NOTICE · 
 Package.swift · Package.resolved (gitignored) · scripts/release.sh · .git-hooks/{pre-push,install.sh,known-failing-tests.txt}
 Sources/MusicCraftCore/
   Version.swift                      ← musicCraftCoreVersion, moves only through scripts/release.sh
-  AnalysisPipeline/AudioExtractor.swift   ← the orchestrator: extract(url:) / extract(buffer:sampleRate:)
+  AnalysisPipeline/AudioExtractor.swift   ← the orchestrator: extract(buffer:sampleRate:) (buffer-based only; there is no extract(url:), the consumer decodes the file to mono Float32)
   Transcription/BasicPitchTranscriber.swift, BasicPitchDecoder.swift   ← the Core ML note engine
   ChordDetection/NoteChordIdentifier.swift, ChordSequenceDecoder.swift ← note-native chords, Viterbi decode
   DSP/TempoEstimator.swift, TempoEstimate.swift, TempoHistogram.swift, BeatTracker.swift,

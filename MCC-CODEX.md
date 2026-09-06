@@ -152,7 +152,7 @@ Value types: `Note`, `NoteName`, `SpelledNote`, `Chord`, `ChordQuality`, `Musica
 
 ### AnalysisPipeline (0.0.8, rebuilt 0.1.0)
 
-`AudioExtractor.extract(url:)` / `extract(buffer:sampleRate:)`: one transcription feeds note-native chords, key (chord-based, melody fallback), tempo, the melodic-skyline `contour` and full-polyphony `detectedNotes`. `Result` and `ChordSegment` shapes are unchanged since 0.0.8; most of `Configuration` is vestigial (only `contourSource` is read).
+`AudioExtractor.extract(buffer:sampleRate:)` (buffer-based only; no URL overload, the consumer decodes the file): one transcription feeds note-native chords, key (chord-based, melody fallback), tempo, the melodic-skyline `contour` and full-polyphony `detectedNotes`. `Result` and `ChordSegment` shapes are unchanged since 0.0.8; most of `Configuration` is vestigial (only `contourSource` is read).
 
 ### ChordDetection (0.1.0 note-native)
 

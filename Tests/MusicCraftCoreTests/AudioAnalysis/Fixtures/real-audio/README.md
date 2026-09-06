@@ -2,7 +2,7 @@
 
 ## Overview
 
-Phase 2.5 real-audio fixtures for MusicCraftCore audio analysis testing. 141 WAV files (32 GADA + 109 TaylorNylon) sourced from legacy Cantus, with ground-truth chord labels in JSON sidecars.
+Phase 2.5 real-audio fixtures for MusicCraftCore audio analysis testing. 141 WAV files (32 GADA + 109 TaylorNylon) sourced from legacy Cantus, with ground-truth chord labels in JSON sidecars. Also present in this directory (added later, not covered by the sections below): `guitarset/` (5 six-channel hex-pickup WAVs at 44.1 kHz with .jams annotations; a mono-only API needs a downmix) and `lyrics/tts/` (10 header-only 4096-byte WAV stubs with zero audio frames plus JSON sidecars, used by the TTS fixture generator tests). Sample rates and durations below were re-measured with ffprobe on 2026-09-05.
 
 ## Source Datasets
 
@@ -13,7 +13,7 @@ Subset of the full GADA dataset from `mossgroves-cantus/TestData/GADA/`. Selecti
 **File naming:** `{Model}_{Chord}_open_022_ID{X}_{Y}.wav`
 - Model: ArgSG (12 files, ID4_1 or ID1_1), Gretsch (12 files, ID1_1 or ID1_2), HBLP (8 files, ID1_1)
 - Chord extracted from `parts[1]` of filename split by underscore
-- 44.1 kHz, mono, ~3–5 seconds per file
+- 48 kHz, mono, 32-bit PCM, ~4.9 seconds per file (30 files are 4.949 s, two are 4.907 s)
 
 **Why GADA:**
 Acoustic guitars with finger picking, sparse voicings (3–4 strings), realistic finger noise and harmonic variation. Exercises AudioExtractor's tuning for fingerstyle electric-acoustic recordings (primary instrument category for Cantus).
@@ -22,7 +22,7 @@ Acoustic guitars with finger picking, sparse voicings (3–4 strings), realistic
 
 Entire dataset from `mossgroves-cantus/TestData/TaylorNylon/`, 7 chord types with data:
 - Am (13 files), C (14), D (13), Dm (9), Em (12), F (13), Fm (16), G (19)
-- 44.1 kHz, mono, ~5–8 seconds per file
+- 44.1 kHz, mono, 16-bit PCM, exactly 3.000 seconds per file
 - Chord label = folder name
 
 **Why TaylorNylon:**
