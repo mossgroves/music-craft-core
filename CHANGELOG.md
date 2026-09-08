@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.18] - 2026-09-07
+
+### Fixed — a take that opens with playing keeps its first lines: a silent slice gets one second look
+
+Chris's report, 2026-09-07: his song "Shadows" never transcribes its opening lines, and the app's
+chart draws the first thirty seconds as instrumental. Neither a gate nor the chart was dropping
+them. The engine decodes a take in fixed 30 s slices anchored at t = 0 (0.1.12's crawl containment),
+and that take opens with about 9.8 s of fingerpicked guitar before the first line, so slice 0 comes
+back with one result, zero segments and empty text. The words never existed at any later stage. The
+cause is the window's PHASE rather than the audio: the same seconds decoded with the window moved
+three seconds later return the whole opening verse at 0.88 mean confidence.
+
+`transcribe` now gives a slice that returned NO segments one more decode with its window shifted
+forward by `silentSliceRetryShift` (7.5 s, a quarter of a window), keeping only the tokens that
+begin inside the original slice's span; the rest of the shifted window belongs to the next slice,
+which decodes it itself. At most one extra decode per silent slice, none on a take whose slices all
+speak. The retry runs under the same `SliceDecodeLedger` token budget, window cap and wall-clock
+watchdog as the first decode, and a CANCELLED slice is never retried: it was cancelled for spending
+itself. The span filter is extracted as `tokensBeginningBefore(_:in:)` and unit-tested.
+
+Measured through the shipping path on the consuming app's seventeen-take corpus, both arms on one
+Mac (`tools/lyric-wer/run-takes.sh`, whisper-small, pinned decode config): `shadows-0811` 52.1% to
+**35.4%** WER and now ahead of Apple on that take (45.8%); the other sixteen takes byte-identical;
+mean **44.1% to 43.1%**, no take worse. The 44.1% baseline reproduces 0.1.17's recorded figure, so
+both arms sit on one scale. Cost: that take's decode 4.44 s to 5.29 s, everything else inside
+run-to-run noise.
+
+Hallucination check, since a retried window over wordless audio is the risk this fix could carry:
+the three instrumental takes the WER corpus excludes were run in both arms. Two stay empty either
+way. The third already invents speech WITHOUT this change (104 tokens) and gains six with it: a
+pre-existing hole in the coverage gate, reported and not folded in here.
+
+No public API change; additive only (two new static members on `WhisperLyricsEngine`).
+
 ## [0.1.17] - 2026-09-02
 
 ### Fixed — the Whisper path no longer hands back a wall of one word: a decode-time repetition brake and a run guard
