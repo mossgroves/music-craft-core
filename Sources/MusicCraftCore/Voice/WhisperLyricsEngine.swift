@@ -251,16 +251,78 @@ enum WhisperLyricsEngine {
                 decodeTask.cancel()
             }
             defer { watchdog.cancel() }
+            var sliceWasSilent = false
             do {
                 let results = try await decodeTask.value
                 let segments = results.flatMap(\.segments).sorted { $0.start < $1.start }
+                sliceWasSilent = segments.isEmpty
                 for segment in segments {
                     let mapped = tokens(fromWords: segment.words ?? [], offsetBy: offsetSeconds)
                     if !mapped.isEmpty { collected.append(mapped) }
                 }
             } catch is CancellationError {
                 // The slice was crawling; its decode was producing empty segments. It stands
-                // as wordless and the take moves on — this catch IS the bound.
+                // as wordless and the take moves on — this catch IS the bound. NOT retried: a
+                // crawling slice was cancelled for spending itself, and asking it again at a
+                // different phase would spend it again.
+            }
+
+            // THE SECOND LOOK AT A SLICE THAT SAID NOTHING AT ALL (2026-09-07, his report that
+            // "Shadows" never transcribes its opening lines).
+            //
+            // The grid above is anchored at t = 0, so a take that opens with playing puts the
+            // singing at an arbitrary phase inside the first window. Measured on his own take
+            // (`Shadows 2026-08-11.m4a`, about 9.8 s of fingerpicking before the first line):
+            // slice 0 decodes to ONE result with ZERO segments and empty text, so the first four
+            // sung lines never exist at any later stage, and the chart honestly draws the opening
+            // as instrumental. It is the window's PHASE, not the audio: re-decoding the same
+            // audio with the window moved 3 s later returns all eighteen opening words at 0.88
+            // mean confidence, and the Apple path (which hears the whole opening) is never
+            // consulted because the take as a whole is not wordless.
+            //
+            // So: when a slice comes back with no segments at all, decode that same span ONCE
+            // more with the window shifted forward by `silentSliceRetryShift`, and keep only the
+            // words that land inside the original span. Bounded by construction: at most one
+            // extra decode per silent slice, none on a take whose slices all speak, and the same
+            // ledger, window cap and wall-clock watchdog govern the retry. Ruled out first, each
+            // measured on the same take and none of them recovering the window: WhisperKit's
+            // no-speech threshold, its log-probability threshold, its temperature fallback, and
+            // starting the grid at the first audio onset (his intro is at full level, so an
+            // energy onset lands at 0 s and changes nothing).
+            if sliceWasSilent, sliceEnd - sliceStart > silentSliceRetryFrames {
+                let retryStart = sliceStart + silentSliceRetryFrames
+                let retryEnd = min(retryStart + sliceFrames, audio.count)
+                if retryEnd > retryStart {
+                    let retryOffset = Double(retryStart) / Double(WhisperKit.sampleRate)
+                    let retryLedger = SliceDecodeLedger(tokenBudget: sliceWindowBudget * 160,
+                                                        windowCap: maxWindowsPerSlice)
+                    let retryAudio = Array(audio[retryStart..<retryEnd])
+                    let retryTask = Task {
+                        try await pipe.transcribe(audioArray: retryAudio,
+                                                  decodeOptions: options,
+                                                  callback: { progress in
+                                                      retryLedger.note(tokenCount: progress.tokens.count)
+                                                  })
+                    }
+                    retryLedger.onWindowCapBreached = { retryTask.cancel() }
+                    let retryWatchdog = Task {
+                        try await Task.sleep(nanoseconds: UInt64(sliceDecodeWallCap * 1_000_000_000))
+                        retryTask.cancel()
+                    }
+                    defer { retryWatchdog.cancel() }
+                    do {
+                        let results = try await retryTask.value
+                        let segments = results.flatMap(\.segments).sorted { $0.start < $1.start }
+                        let spanEnd = Double(sliceEnd) / Double(WhisperKit.sampleRate)
+                        for segment in segments {
+                            let mapped = tokens(fromWords: segment.words ?? [], offsetBy: retryOffset)
+                            let inSpan = tokensBeginningBefore(spanEnd, in: mapped)
+                            if !inSpan.isEmpty { collected.append(inSpan) }
+                        }
+                    } catch is CancellationError {
+                        // The retry crawled; the slice stands as wordless, as it did before.
+                    }
+                }
             }
             sliceStart = sliceEnd
         }
@@ -268,6 +330,13 @@ enum WhisperLyricsEngine {
         let filtered = filterArtifacts(segments: collected, audioDuration: audioDuration)
         // The coverage gate LAST: it judges the surviving transcript as a whole.
         return passesCoverageGate(filtered, audioDuration: audioDuration) ? filtered : []
+    }
+
+    /// The retry's span filter, pure so it can be tested without a decoder: a shifted window
+    /// reaches past the slice it was retried for, and everything past that boundary belongs to the
+    /// NEXT slice, which decodes it itself. Keeping both copies would double those words.
+    static func tokensBeginningBefore(_ spanEnd: TimeInterval, in tokens: [TranscribedToken]) -> [TranscribedToken] {
+        tokens.filter { $0.onsetTime < spanEnd }
     }
 
     // MARK: - Token mapping (pure)
@@ -424,6 +493,14 @@ enum WhisperLyricsEngine {
     /// ends early. Structural, not tuned: 2 × 160 tokens is ~4× the densest sung 30 s
     /// window in the corpus (~80 tokens).
     static let sliceWindowBudget = 2
+
+    /// How far forward a slice's window moves for its ONE retry when the first decode returned no
+    /// segments at all (2026-09-07). A quarter of a window: far enough to move a sung entrance off
+    /// the boundary that swallowed it (measured on `Shadows 2026-08-11.m4a`, where the singing
+    /// starts 9.8 s in and a 3 s shift already recovers every opening word), short enough that the
+    /// retry still covers most of the span the first decode was asked about.
+    static let silentSliceRetryShift: TimeInterval = 7.5
+    static var silentSliceRetryFrames: Int { Int(silentSliceRetryShift * Double(WhisperKit.sampleRate)) }
 
     /// HOW MANY WINDOWS one slice's internal seek loop may open before the slice is judged to
     /// be crawling and its decode is CANCELLED (2026-08-12, the second half of the crawl fix —

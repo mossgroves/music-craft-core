@@ -500,3 +500,40 @@ extension WhisperLyricsEngineTests {
         XCTAssertEqual(breaches, 0)
     }
 }
+
+// MARK: - The silent-slice retry (0.1.18, 2026-09-07)
+
+extension WhisperLyricsEngineTests {
+    /// A slice that decodes to nothing is retried with its window shifted forward, and the retry's
+    /// words are kept only where the first decode was asked to look. Everything past that boundary
+    /// is the next slice's audio, which decodes it itself; keeping both copies would say each of
+    /// those words twice.
+    func testTheRetryKeepsOnlyTheWordsInsideTheSliceItRetried() {
+        let spanEnd = 30.0
+        let tokens = [
+            TranscribedToken(text: "long", onsetTime: 9.8, duration: 0.3, confidence: 0.75),
+            TranscribedToken(text: "ago", onsetTime: 11.0, duration: 0.3, confidence: 1.0),
+            TranscribedToken(text: "light", onsetTime: 27.8, duration: 0.3, confidence: 0.93),
+            TranscribedToken(text: "never", onsetTime: 31.7, duration: 0.3, confidence: 0.5),
+            TranscribedToken(text: "knew", onsetTime: 32.5, duration: 0.3, confidence: 1.0),
+        ]
+        let kept = WhisperLyricsEngine.tokensBeginningBefore(spanEnd, in: tokens)
+        XCTAssertEqual(kept.map(\.text), ["long", "ago", "light"],
+                       "The opening comes back; the words past the slice belong to the next slice")
+    }
+
+    func testTheRetrySpanFilterIsEmptyWhenEverythingLandsPastTheBoundary() {
+        let tokens = [TranscribedToken(text: "never", onsetTime: 31.7, duration: 0.3, confidence: 0.5)]
+        XCTAssertTrue(WhisperLyricsEngine.tokensBeginningBefore(30.0, in: tokens).isEmpty,
+                      "Nothing inside the span means the slice stands wordless, as it did before")
+    }
+
+    /// The shift is a quarter of the 30 s window: far enough to move a sung entrance off the
+    /// boundary that swallowed it (measured at 3 s on Shadows), short enough that the retry still
+    /// covers most of the span it was asked about.
+    func testTheRetryShiftIsAQuarterOfTheWindow() {
+        XCTAssertEqual(WhisperLyricsEngine.silentSliceRetryShift, 7.5)
+        XCTAssertEqual(WhisperLyricsEngine.silentSliceRetryFrames, 120_000,
+                       "7.5 s at WhisperKit's 16 kHz")
+    }
+}
