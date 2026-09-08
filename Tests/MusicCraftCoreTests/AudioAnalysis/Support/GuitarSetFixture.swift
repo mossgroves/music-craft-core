@@ -79,6 +79,16 @@ struct GuitarSetFixture {
     /// Get the standard GuitarSet fixture directory.
     /// Mirrors the pattern from RealAudioChordTests.
     static func fixtureDirectory() -> URL? {
+        // Test-support override: point the GuitarSet tests at an external fixture folder
+        // (e.g. the full 360-excerpt mono-mic set kept outside the repo). Used first when
+        // the variable is set and the folder exists; otherwise falls through unchanged.
+        if let override = ProcessInfo.processInfo.environment["MCC_GUITARSET_FIXTURE_DIR"] {
+            let overrideURL = URL(fileURLWithPath: override)
+            if FileManager.default.fileExists(atPath: overrideURL.path) {
+                return overrideURL
+            }
+        }
+
         // Try hardcoded standard path first
         let standardPath = URL(fileURLWithPath: "/Users/chris/Documents/Code/mossgroves-music-craft-core/Tests/MusicCraftCoreTests/AudioAnalysis/Fixtures/real-audio/guitarset")
         if FileManager.default.fileExists(atPath: standardPath.path) {
