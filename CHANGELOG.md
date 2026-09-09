@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.21] - 2026-09-09
+
+### Fixed — a phrase the decoder gets stuck on no longer lands on the lyric sheet: the run guard sees repeated phrases, and the sign-off hallucination is dropped
+
+Chris's ruling, 2026-09-09 (Songcatcher P-2026-09-08-17, "i think so why not?"; the bar he set: measured
+first, none allowed to get worse). Measured on the public JamendoLyrics corpus at 0.1.18 (the app's
+`docs/audits/public-corpus-2026-09-08.md`): on 7 of 20 songs Whisper wrote one phrase of 2 to 13 words
+5 to 13 times in a row (405 tokens in all; the largest, 9 words at one timestamp 13 times), and "Thanks for watching!" appeared in 3 of 20 transcripts. Rule (3) of the
+artifact filter counted ONE word repeated, and the decode-time brake caps blocks of up to four words
+at five repeats within a window, so these passed both.
+
+Rule (3) of `filterArtifacts` now convicts a consecutive run of any folded block of 1 to 16 words
+(`repetitionPhraseMaxWords`), not only one word, at the same floor of five (`repetitionRunFloor`),
+every copy dropped, counted across segment boundaries, iterated to the same fixed point; the shortest
+period that convicts owns a pass, so the one-word rule's convictions are byte-identical to before. Stage
+(1) of the same filter drops a segment whose folded words are exactly one of `signOffPhrases` ("thanks
+for watching", "thank you for watching"; only the two the corpora actually produced), before the ghost
+floor, so a sign-off that opens a take no longer spends the opening-word exemption. `RepetitionBrake` is
+untouched: it sees one decode window's BPE tokens and any change to it re-opens the decode measurement.
+
+Stated plainly, the one exposure: a real two-to-four-word hook sung five or more times running would now
+be dropped whole where the one-word rule kept it (the brake caps a correct decode at five copies, which
+is the floor). No reference to hand has a 5-16 word block above four copies and no phrase on his 17
+sheets passes four; two short hooks in the Jamendo sheets reach six, and neither was decoded as a run.
+If it ever bites, the knob is keep-one for periods of two or more, at a measured cost of 0.5 to 1.5
+points on the two vocalise loops.
+
+Measured through the shipping tools (`take-probe --transcribe`, the same call the app makes):
+
+| Lane (decode byte-identical before and after) | Before | After |
+|---|---|---|
+| JamendoLyrics, 20 songs, Whisper pooled WER | 42.3% (2410 errors) | 36.9% (2103); 13 songs better, 7 identical, none worse |
+| HILA, One Way Street, Wordsmith, Crowd Pleaser | 55.0, 61.2, 49.4, 31.3 | 24.2, 35.0, 39.8, 24.8 |
+| JamendoLyrics, Apple side | 35.1% | byte-identical, 20 of 20 |
+| His 17 takes, Whisper mean WER | 43.1% | 42.9%; 15 byte-identical, Heart Sing and Highest Heaven each lose one "Thank you for watching!" |
+| His hooks (human, limpia, forever, sing) | 11/12, 9/9, 8/8, 4/5 | the same |
+| His voiceless Instrumental 2 | 110 hallucinated tokens | 0 |
+| Determinism (HILA and 6 Human, take-probe twice) | | identical |
+
+Off the headline and on the record: Whisper `--drop-timeless` pooled 36.5 to 35.9 with Wordsmith 39.8
+to 39.9 inside it (eleven loop tokens that carried real duration, one on a reference word), and the
+line-break harness's whisper row hit 41.3 to 40.8 on the corpus denominator with precision 67.0 to
+70.8. The sung words under a loop are not recovered: the loop burned the window (One Way Street
+deletions 9 to 27, Crowd Pleaser 20 to 50); that is a decode-side change and a separate proposal.
+
+Tests: `WhisperLyricsEngineTests` gains 13 pure tests (the measured loop shapes cut whole with the lines
+around them surviving, a chorus at three and four copies untouched, a two-word block at five dropped and
+four kept, a phrase ending in its own first word caught by its period, a loop spanning segments as one
+run, an interior collapse terminating, punctuation breaking a pattern, determinism, the 16-word window,
+the sign-off rule on exactly the named strings). Every fixture line that was a real lyric from a
+non-commercial track was replaced with same-count filler on the reviewer's blocker. One workflow, five
+agents (two characterizers, a builder, an adversarial reviewer, a fixer).
+
 ## [0.1.20] - 2026-09-08
 
 ### Fixed — a cancelled or timed-out listen stops decoding
