@@ -537,3 +537,111 @@ extension WhisperLyricsEngineTests {
                        "7.5 s at WhisperKit's 16 kHz")
     }
 }
+
+// MARK: - A cancelled or timed-out listen stops decoding (P-2026-09-08-12, 2026-09-08)
+
+/// Songcatcher cancels its listen task when the listen's timeout fires (max(300 s, 4 x the
+/// take's duration)) or when the listen is cancelled outright. Before this change the slice loop
+/// never looked at the calling task and each slice's decode ran in an unstructured Task that an
+/// outer cancel could not reach, so the decode ground on to the end of the take. The per-slice
+/// cancel (ledger window cap, wall-clock watchdog) is a bound on ONE slice and is untouched.
+extension WhisperLyricsEngineTests {
+    /// A model folder that does not exist. If the engine ever reaches the model it fails with
+    /// WhisperKit's own error, never a CancellationError, so the assertions below can tell "the
+    /// cancel was honoured first" apart from "the call failed for some other reason".
+    private static func missingModelFolder() -> URL {
+        URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("mcc-whisper-cancel-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    /// Run `body` on a task that is ALREADY cancelled when the body starts: the task yields until
+    /// the cancel has landed, so the body never races `cancel()`.
+    private func onAnAlreadyCancelledTask<T>(
+        _ body: @escaping @Sendable () async throws -> T
+    ) async -> Result<T, Error> {
+        let task = Task<T, Error> {
+            while !Task.isCancelled { await Task.yield() }
+            return try await body()
+        }
+        task.cancel()
+        return await task.result
+    }
+
+    /// The engine door: a cancelled caller gets CancellationError before the model is touched.
+    func testTranscribeFromACancelledTaskThrowsCancellationBeforeTouchingTheModel() async {
+        let silence = [Float](repeating: 0, count: 16_000)
+        let folder = Self.missingModelFolder()
+
+        let outcome = await onAnAlreadyCancelledTask {
+            try await WhisperLyricsEngine.transcribe(buffer: silence, sampleRate: 16_000,
+                                                     modelFolder: folder)
+        }
+
+        switch outcome {
+        case .success(let tokens):
+            XCTFail("a cancelled caller must not get a transcript (got \(tokens.count) tokens)")
+        case .failure(let error):
+            XCTAssertTrue(error is CancellationError,
+                          "expected CancellationError before the model is touched, got \(error)")
+        }
+    }
+
+    /// The public door: `LyricsExtractor.transcribe` swallows every Whisper failure and falls
+    /// back to Apple, and a cancel is not a failure. It must reach the caller as
+    /// CancellationError, not start a second decode on the Apple path.
+    func testTheExtractorRethrowsACancelInsteadOfFallingBackToApple() async {
+        let silence = [Float](repeating: 0, count: 16_000)
+        let configuration = LyricsExtractor.Configuration(whisperModelFolder: Self.missingModelFolder())
+
+        let outcome = await onAnAlreadyCancelledTask {
+            try await LyricsExtractor.transcribe(buffer: silence, sampleRate: 16_000,
+                                                 locale: "en-US", configuration: configuration)
+        }
+
+        switch outcome {
+        case .success(let tokens):
+            XCTFail("a cancelled caller must not get a transcript (got \(tokens.count) tokens)")
+        case .failure(let error):
+            XCTAssertTrue(error is CancellationError,
+                          "expected the cancel to reach the caller, got \(error)")
+        }
+    }
+
+    /// MODEL-BACKED, gated like the integration tests: with a real model on disk, a transcribe
+    /// over a long buffer that is cancelled mid-decode throws CancellationError promptly (the
+    /// cancel is forwarded into the running slice, so it stops within one Whisper window) rather
+    /// than decoding the remaining slices first. Twenty minutes of low-level noise is forty
+    /// slices, far more than twenty seconds of decode on any host.
+    func testACancelledTranscribeStopsWithinOneWindow() async throws {
+        guard let modelDir = ProcessInfo.processInfo.environment["MCC_WHISPER_MODEL_DIR"] else {
+            throw XCTSkip("MCC_WHISPER_MODEL_DIR not set: skipping the model-backed cancellation test.")
+        }
+        let folder = URL(fileURLWithPath: modelDir, isDirectory: true)
+        // Pay the model load up front so the clock below measures the decode loop, not the load.
+        try await WhisperLyricsEngine.preload(modelFolder: folder)
+
+        let oneSecond = (0..<16_000).map { _ in Float.random(in: -0.01...0.01) }
+        let noise = Array([[Float]](repeating: oneSecond, count: 20 * 60).joined())
+
+        let listen = Task {
+            try await WhisperLyricsEngine.transcribe(buffer: noise, sampleRate: 16_000,
+                                                     modelFolder: folder)
+        }
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        let cancelledAt = Date()
+        listen.cancel()
+        let outcome = await listen.result
+        let secondsAfterCancel = Date().timeIntervalSince(cancelledAt)
+
+        switch outcome {
+        case .success(let tokens):
+            XCTFail("a cancelled listen must not finish the take (returned \(tokens.count) tokens "
+                    + "\(String(format: "%.1f", secondsAfterCancel)) s after the cancel)")
+        case .failure(let error):
+            XCTAssertTrue(error is CancellationError, "expected CancellationError, got \(error)")
+        }
+        XCTAssertLessThan(secondsAfterCancel, 20,
+                          "the cancel must end the decode within one window, not at the take's end")
+        print("cancelled transcribe returned \(String(format: "%.2f", secondsAfterCancel)) s after the cancel")
+    }
+}

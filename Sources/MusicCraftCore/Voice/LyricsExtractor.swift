@@ -97,6 +97,12 @@ public enum LyricsExtractor {
                 // honest wordless flow. Falling through costs one Apple pass, only on takes
                 // that produced no usable Whisper words anyway.
                 if !whisperTokens.isEmpty { return whisperTokens }
+            } catch let cancellation as CancellationError {
+                // THE CALLER'S CANCEL IS NOT A WHISPER FAILURE (P-2026-09-08-12, 2026-09-08). A
+                // cancelled or timed-out listen must stop decoding; falling through to the Apple
+                // path here would start a second, slower decode of the same take that nothing is
+                // waiting for. Rethrown, so the cancel reaches the caller.
+                throw cancellation
             } catch {
                 // Deliberately swallowed: the Apple path is the documented recovery.
             }

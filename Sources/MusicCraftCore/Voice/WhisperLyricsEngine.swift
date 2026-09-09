@@ -181,7 +181,10 @@ enum WhisperLyricsEngine {
 
     /// Transcribe a mono Float32 buffer with the pinned Whisper config, then strip the
     /// measured artifacts. Throws when the model folder does not hold a loadable model or
-    /// decoding fails — the caller (LyricsExtractor) treats any throw as "fall back to Apple".
+    /// decoding fails; the caller (LyricsExtractor) treats any such throw as "fall back to
+    /// Apple". Throws `CancellationError` when the CALLING task is cancelled (0.1.20,
+    /// P-2026-09-08-12), and the caller rethrows that one: a cancelled listen stops, it does
+    /// not start a second decode.
     ///
     /// Feed the FULL MIX, never an isolated stem: the AUSoundIsolation stem measured 23.9%
     /// WER vs 17.5% on the same song's mix (A/B eval, 2026-08-07).
@@ -193,6 +196,19 @@ enum WhisperLyricsEngine {
     ) async throws -> [TranscribedToken] {
         guard !buffer.isEmpty, sampleRate > 0 else { return [] }
 
+        // THE CALLER'S CANCELLATION ENDS THE TAKE (P-2026-09-08-12, 2026-09-08). Two kinds of
+        // cancellation meet in this function and they mean different things:
+        // - The CALLING task is cancelled (Songcatcher's listen timed out, at
+        //   max(300 s, 4 x the take's duration), or the listen itself was cancelled): the whole
+        //   transcribe ends, THROWN as CancellationError. Checked here before the model is
+        //   touched, at the top of every slice, and again right after each slice's and each
+        //   retry's own catch below.
+        // - The LEDGER or the WATCHDOG cancels one slice's decode task (the crawl bound): that
+        //   ends ONE slice, CAUGHT, and the loop continues to the next slice.
+        // Before this, the slice loop never looked at the calling task, and each slice's decode
+        // ran in an unstructured Task that an outer cancel could not reach, so a cancelled or
+        // timed-out listen kept decoding to the end of the take.
+        try Task.checkCancellation()
         let pipe = try await PipelineStore.shared.pipeline(for: modelFolder)
         let audio = try resampleTo16k(buffer, sampleRate: sampleRate)
 
@@ -213,6 +229,7 @@ enum WhisperLyricsEngine {
         var collected: [[TranscribedToken]] = []
         var sliceStart = 0
         while sliceStart < audio.count {
+            try Task.checkCancellation()   // the caller's cancel ends the take (P-2026-09-08-12)
             let sliceEnd = min(sliceStart + sliceFrames, audio.count)
             let offsetSeconds = Double(sliceStart) / Double(WhisperKit.sampleRate)
             // THE SLICE'S TOKEN BUDGET is the second half of the crawl containment (the slicing
@@ -234,6 +251,10 @@ enum WhisperLyricsEngine {
             // window, token budget spent to no effect). A wall-clock watchdog backs the window
             // heuristic. A cancelled slice contributes nothing and the loop continues, so real
             // singing in a take's OTHER slices survives a crawling one.
+            // THAT IS THE SLICE'S OWN CANCEL, CAUGHT. The CALLER'S cancel is a different thing
+            // (P-2026-09-08-12, 2026-09-08): it is forwarded into the same decode task so the
+            // decode stops within one window, and re-checked after the catch, where it ends the
+            // whole take, thrown. See the block at the top of this function.
             let ledger = SliceDecodeLedger(tokenBudget: sliceWindowBudget * 160,
                                            windowCap: maxWindowsPerSlice)
             let sliceAudio = Array(audio[sliceStart..<sliceEnd])
@@ -253,7 +274,13 @@ enum WhisperLyricsEngine {
             defer { watchdog.cancel() }
             var sliceWasSilent = false
             do {
-                let results = try await decodeTask.value
+                // The caller's cancel is FORWARDED into the decode task, so a cancelled listen
+                // stops within one Whisper window instead of at the slice's end. The ledger and
+                // the watchdog cancel the same task on their own terms, unchanged.
+                let results = try await withTaskCancellationHandler(
+                    operation: { try await decodeTask.value },
+                    onCancel: { decodeTask.cancel() }
+                )
                 let segments = results.flatMap(\.segments).sorted { $0.start < $1.start }
                 sliceWasSilent = segments.isEmpty
                 for segment in segments {
@@ -265,7 +292,12 @@ enum WhisperLyricsEngine {
                 // as wordless and the take moves on — this catch IS the bound. NOT retried: a
                 // crawling slice was cancelled for spending itself, and asking it again at a
                 // different phase would spend it again.
+                //
+                // That is the LEDGER'S or the WATCHDOG'S cancel. The caller's cancel lands here
+                // too (it was forwarded into the same task), and the check below tells the two
+                // apart: a cancelled caller ends the take, thrown (P-2026-09-08-12).
             }
+            try Task.checkCancellation()
 
             // THE SECOND LOOK AT A SLICE THAT SAID NOTHING AT ALL (2026-09-07, his report that
             // "Shadows" never transcribes its opening lines).
@@ -311,7 +343,10 @@ enum WhisperLyricsEngine {
                     }
                     defer { retryWatchdog.cancel() }
                     do {
-                        let results = try await retryTask.value
+                        let results = try await withTaskCancellationHandler(
+                            operation: { try await retryTask.value },
+                            onCancel: { retryTask.cancel() }
+                        )
                         let segments = results.flatMap(\.segments).sorted { $0.start < $1.start }
                         let spanEnd = Double(sliceEnd) / Double(WhisperKit.sampleRate)
                         for segment in segments {
@@ -322,6 +357,7 @@ enum WhisperLyricsEngine {
                     } catch is CancellationError {
                         // The retry crawled; the slice stands as wordless, as it did before.
                     }
+                    try Task.checkCancellation()   // and a cancelled caller ends the take here too
                 }
             }
             sliceStart = sliceEnd
