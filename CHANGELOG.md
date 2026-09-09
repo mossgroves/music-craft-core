@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.20] - 2026-09-08
+
+### Fixed — a cancelled or timed-out listen stops decoding
+
+Chris's ruling, 2026-09-08 (Songcatcher P-2026-09-08-12, "I think yes to this, why would I choose
+no?"). The consumer cancels a listen's task when its timeout fires (five minutes, or four times the
+take's length, whichever is longer) or when the listen is cancelled, and until 0.1.20 the decode ran on
+to the end of the take regardless: `WhisperLyricsEngine.transcribe`'s slice loop never looked at the
+calling task, and each slice's decode ran in an unstructured `Task` that outer cancellation does not
+reach. The phone kept working for minutes on a result nobody would read, and the next listen contended
+with it.
+
+`transcribe` now checks the calling task before it obtains the pipeline, at the top of every slice, and
+after each slice's and each retry's own crawl bound, and it forwards the calling task's cancellation
+into the running decode, so a cancelled listen stops within one Whisper window and throws
+`CancellationError`. The per-slice bounds are unchanged: a slice cancelled by the ledger's window cap
+or the wall-clock watchdog still stands as wordless and the take moves on, exactly as in 0.1.12.
+
+One public-surface change, named: `LyricsExtractor.transcribe` now rethrows a `CancellationError` from
+the Whisper path instead of treating it as a Whisper failure and falling through to the Apple decoder;
+every other Whisper error still falls back to Apple as before. Without the rethrow a cancelled listen
+would have started a second, slower decode of the same take that nothing was waiting for (the Apple
+path does not check cancellation; unchanged, out of scope here). A listen that is not cancelled is
+untouched: two corpus takes (Love is on the Rise, Rodanthe) decoded through `take-probe --transcribe`
+against 0.1.19 and against this change are byte-identical, tokens, transcript and all.
+
+Measured (Mac M2 Max, release, the 828 s corpus take, a cancel-probe outside the repos that prepares
+the model, starts `LyricsExtractor.transcribe` in a task and cancels the task 5 s in): at 0.1.19 the call
+returned 21.41 s after the cancel with the full result (703 tokens, the whole take decoded; on a phone
+at about half real time that is minutes); with this change it returned 0.01 s after the cancel, thrown
+as `CancellationError`. The consumer's exit is still bounded by its own stages that do not check
+cancellation (its detached pitch pass, the Apple fallback), so on the device the gain is the Whisper
+decode, not the whole listen.
+
+Tests: `WhisperLyricsEngineTests` gains three: a transcribe called from an already-cancelled task throws
+`CancellationError` before touching any model; the extractor rethrows a cancel instead of falling back to
+Apple; and, model-backed and skipped unless `MCC_WHISPER_MODEL_DIR` is set, a transcribe over a 20-minute
+buffer cancelled 1 s in returns within one window (0.03 s after the cancel, measured). One workflow, three
+agents (a builder, an app-side tracer, an adversarial reviewer: verdict ship, no blockers).
+
 ## [0.1.19] - 2026-09-08
 
 ### Fixed — the same take always gets the same key and the same chords: two hash-order ties resolved
