@@ -26,8 +26,8 @@ enum ChordSequenceDecoder {
     /// and TaylorNylon 99.1/99.1 root/exact on both sides, same single C→A confusion. On the
     /// multi-chord GuitarSet set the same run moved progression mean CSR 28.7% → 31.5% (still under
     /// its long-standing threshold — a documented expected-failure, unchanged in count). No key-
-    /// inference claim: that metric flaps run to run on a Dictionary-ordered tie-break inside
-    /// `ProgressionAnalyzer.inferKey` (see CHANGELOG 0.1.7).
+    /// inference claim was made then: that metric flapped run to run on a Dictionary-ordered
+    /// tie-break inside `ProgressionAnalyzer.inferKey` (CHANGELOG 0.1.7), deterministic since 0.1.19.
     static let defaultSwitchPenalty = 0.12
 
     /// Magnitude of the key-aware non-diatonic penalty (second decode pass) — deliberately in the

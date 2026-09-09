@@ -84,7 +84,11 @@ public enum NoteChordIdentifier {
     private static func score(root: Int, quality: ChordQuality,
                               pcs: [Double], total: Double, presenceFloor: Double,
                               rootIsBass: Bool) -> Double {
-        let chordSet = Set(quality.intervals.map { (root + $0) % 12 })
+        // Chord tones in ASCENDING pitch-class order, never Set order: Swift seeds Set iteration per
+        // process, and a sum taken in a different order lands on a different last bit, so the same
+        // take scored the same chord 0.6599999999999998 in one run and 0.6599999999999999 in the next
+        // (17 of 18 corpus takes, 0.1.16's record; fixed in 0.1.19 with the key tie-break).
+        let chordSet = Set(quality.intervals.map { (root + $0) % 12 }).sorted()
         var chordWeight = 0.0
         var missing = 0
         for pc in chordSet {
