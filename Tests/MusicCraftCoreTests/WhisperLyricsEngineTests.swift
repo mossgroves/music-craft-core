@@ -273,6 +273,278 @@ final class WhisperLyricsEngineTests: XCTestCase {
         XCTAssertEqual(filtered.map(\.onsetTime), filtered.map(\.onsetTime).sorted())
     }
 
+    // MARK: - Artifact filter rule 3, the phrase axis (P-2026-09-08-17, 2026-09-09)
+
+    /// The measured loops from the JamendoLyrics 20 and his Instrumental 2, as fixtures: the
+    /// hallucinated phrase and the repeat count are the ones the 2026-09-08 mint produced
+    /// (Sanctuary `docs/audits/public-corpus-2026-09-08.md`). Every one has a longest
+    /// single-word run of 1 or 2, which is why the one-word rule let them through. The loops
+    /// are Whisper's inventions and occur in no reference. The SUNG lines around them are
+    /// stand-ins of the same word count, never the lyric: the public-corpus rule keeps every
+    /// reference line out of this tree, and the assertions depend only on shape (a line, a
+    /// loop, a line).
+
+    private func phrase(_ words: [String], times: Int, from onset: TimeInterval) -> [TranscribedToken] {
+        (0..<times).flatMap { copy in
+            words.enumerated().map { index, word in
+                token(word, onset: onset + Double(copy * words.count + index) * 0.3)
+            }
+        }
+    }
+
+    private func line(_ words: [String], from onset: TimeInterval) -> [TranscribedToken] {
+        words.enumerated().map { index, word in
+            token(word, onset: onset + Double(index) * 0.3)
+        }
+    }
+
+    private func line(_ text: String, from onset: TimeInterval) -> [TranscribedToken] {
+        line(text.split(separator: " ").map(String.init), from: onset)
+    }
+
+    /// Neutral stand-in words of a given count: "tag1 tag2 ... tagN".
+    private func filler(_ count: Int, _ tag: String) -> [String] {
+        (1...count).map { "\(tag)\($0)" }
+    }
+
+    private func filtered(_ segments: [[TranscribedToken]]) -> [String] {
+        WhisperLyricsEngine.filterArtifacts(segments: segments, audioDuration: 240).map(\.text)
+    }
+
+    func testTheMeasuredPhraseLoopsAreDroppedWholeAndTheLinesAroundThemSurvive() {
+        // One Way Street: 8 words x8 over the sung first verse, between a 7-word line and a
+        // 9-word line.
+        let oneWayBefore = filler(7, "verse")
+        let oneWayAfter = filler(9, "next")
+        let oneWay = line(oneWayBefore, from: 1)
+            + phrase(["if", "you", "can", "hear", "me", "I'm", "not", "sure"], times: 8, from: 3)
+            + line(oneWayAfter, from: 27)
+        XCTAssertEqual(filtered([oneWay]), oneWayBefore + oneWayAfter)
+
+        // Crowd Pleaser: 6 words x11, a rotation of a 7-word hook that is sung once on each side.
+        let hook = filler(7, "hook")
+        let crowd = line(hook, from: 0)
+            + phrase(["you", "down", "I'm", "not", "gonna", "let"], times: 11, from: 2)
+            + line(hook, from: 30)
+        XCTAssertEqual(filtered([crowd]), hook + hook)
+
+        // HILA: 9 words x13, 117 tokens stamped on ONE onset. Outside any 2-8 word window.
+        // A 4-word line before it, a 6-word line after.
+        let hilaBefore = filler(4, "verse")
+        let hilaAfter = filler(6, "next")
+        let hila = line(hilaBefore, from: 20)
+            + (0..<13).flatMap { _ in
+                ["sure", "if", "you", "can", "see", "it", "but", "I'm", "not"].map { token($0, onset: 25.46, duration: 0) }
+            }
+            + line(hilaAfter, from: 60)
+        XCTAssertEqual(filtered([hila]), hilaBefore + hilaAfter)
+
+        // Wordsmith: 13 words x8 over the opening rap verse, then a 7-word line.
+        let wordsmithAfter = filler(7, "verse")
+        let wordsmith = phrase(["I'm", "a", "fan", "of", "the", "music", "I'm", "not", "a", "fan", "of", "the", "music"],
+                               times: 8, from: 2)
+            + line(wordsmithAfter, from: 20)
+        XCTAssertEqual(filtered([wordsmith]), wordsmithAfter)
+
+        // Keep On: the brake's fingerprint, a two-word block capped at exactly five, between a
+        // 5-word line and a 4-word line.
+        let keepOnBefore = filler(5, "verse")
+        let keepOnAfter = filler(4, "next")
+        let keepOn = line(keepOnBefore, from: 100)
+            + phrase(["2", "3"], times: 5, from: 109)
+            + line(keepOnAfter, from: 112)
+        XCTAssertEqual(filtered([keepOn]), keepOnBefore + keepOnAfter)
+
+        // His Instrumental 2 (no voice on the take): 11 words x8.
+        let instrumental = phrase(["that", "I'm", "not", "sure", "if", "I'm", "gonna", "be", "able", "to", "do"],
+                                  times: 8, from: 33)
+        XCTAssertEqual(filtered([instrumental]), [])
+    }
+
+    func testCaseAndPunctuationDoNotHideAPhraseLoop() {
+        // Like The Sun: "Do da da do." x5, the raw texts differing by case and punctuation only,
+        // then an 8-word sung line.
+        let vocalise = [["Do", "da", "da", "do."], ["do", "da", "da", "do"], ["Do", "da", "da", "do,"],
+                        ["do", "da", "da", "do."], ["Do", "da", "da", "do"]]
+            .enumerated().flatMap { copy, words in
+                words.enumerated().map { index, word in token(word, onset: Double(copy * 4 + index) * 0.3) }
+            }
+        let after = filler(8, "verse")
+        let segment = vocalise + line(after, from: 8)
+
+        XCTAssertEqual(filtered([segment]), after)
+    }
+
+    func testAChorusRepeatedThreeOrFourTimesIsUntouched() {
+        // Cortez: a 5-word hook x4 after an 11-word line, in three places of the song (the sheet
+        // writes all four).
+        let cortez = line(filler(11, "verse"), from: 90)
+            + phrase(filler(5, "hook"), times: 4, from: 93)
+        XCTAssertEqual(filtered([cortez]), cortez.map(\.text))
+
+        // Crowd Pleaser's 3-word hook x3 (cased and punctuated as minted) and LUNABLIND's 4-word
+        // hook x3: real repeats.
+        let waits = [token("one,", onset: 48.5), token("two", onset: 48.8), token("three.", onset: 49.1),
+                     token("One", onset: 49.4), token("two", onset: 49.7), token("three,", onset: 50.0),
+                     token("one", onset: 50.3), token("two", onset: 50.6), token("three!", onset: 50.9)]
+        XCTAssertEqual(filtered([waits]), waits.map(\.text))
+        let firstTime = phrase(filler(4, "hook"), times: 3, from: 135)
+        XCTAssertEqual(filtered([firstTime]), firstTime.map(\.text))
+
+        // Wordsmith's 15-word chorus x4, whose opening pair repeats inside it (the period-2 scan
+        // sees that pair twice, under the floor; the period-15 scan sees four copies).
+        var chorusWords = filler(15, "chorus")
+        chorusWords[2] = chorusWords[0]
+        chorusWords[3] = chorusWords[1]
+        let chorus = phrase(chorusWords, times: 4, from: 102)
+        XCTAssertEqual(filtered([chorus]), chorus.map(\.text))
+
+        // A 9-word block x4: above the 2-8 window, still under the floor.
+        let nine = phrase(["sure", "if", "you", "can", "see", "it", "but", "I'm", "not"], times: 4, from: 0)
+        XCTAssertEqual(filtered([nine]), nine.map(\.text))
+
+        // Moon I Mean "we're not one" x4 is a hallucination the count cannot tell from Cortez;
+        // the floor is five and it stays, deliberately.
+        let moon = phrase(["we're", "not", "one"], times: 4, from: 32)
+        XCTAssertEqual(filtered([moon]), moon.map(\.text))
+    }
+
+    func testATwoWordBlockRepeatedFiveTimesIsDroppedAndFourAreKept() {
+        // The brake's own bar (the Lujah "alaihi loo" loop), now the guard's too.
+        let five = line("we sing", from: 0) + phrase(["alaihi", "loo"], times: 5, from: 1) + line("tonight", from: 5)
+        let four = line("we sing", from: 0) + phrase(["alaihi", "loo"], times: 4, from: 1) + line("tonight", from: 5)
+
+        XCTAssertEqual(filtered([five]), ["we", "sing", "tonight"])
+        XCTAssertEqual(filtered([four]), four.map(\.text))
+    }
+
+    func testAPhraseThatEndsWithItsFirstWordIsCaughtByItsPeriodNotByThePairs() {
+        // "home take me home" x8: the one-word scan sees only pairs of "home"; the phrase scan
+        // sees the block.
+        let segment = line("carry me", from: 0) + phrase(["home", "take", "me", "home"], times: 8, from: 1)
+        XCTAssertEqual(filtered([segment]), ["carry", "me"])
+        let four = line("carry me", from: 0) + phrase(["home", "take", "me", "home"], times: 4, from: 1)
+        XCTAssertEqual(filtered([four]), four.map(\.text))
+    }
+
+    func testAPhraseLoopSpanningSegmentsIsOneRun() {
+        // Ridgway "i'm gonna go" x8, every copy its own segment (WhisperKit re-seeks inside the
+        // slice and restarts the pattern per segment), between two 5-word lines whose four
+        // "oh"s sit under the one-word floor.
+        let edge = ["edge1", "oh", "oh", "oh", "oh"]
+        let ridgway = [line(edge, from: 210)]
+            + (0..<8).map { copy in phrase(["I'm", "gonna", "go"], times: 1, from: 214 + Double(copy) * 2) }
+            + [line(edge, from: 232)]
+        let survivors = WhisperLyricsEngine.filterArtifacts(segments: ridgway, audioDuration: 284)
+        XCTAssertEqual(survivors.map(\.text), edge + edge)
+        XCTAssertEqual(survivors.map(\.startsSegment), [true, false, false, false, false, true, false, false, false, false])
+
+        // Three copies in one segment and two in the next are five, one run.
+        let first = line("we", from: 0) + phrase(["oh", "yeah"], times: 3, from: 1)
+        let second = phrase(["oh", "yeah"], times: 2, from: 3) + line("fly", from: 5)
+        let split = WhisperLyricsEngine.filterArtifacts(segments: [first, second], audioDuration: 120)
+        XCTAssertEqual(split.map(\.text), ["we", "fly"])
+        XCTAssertEqual(split.map(\.startsSegment), [true, true])
+    }
+
+    func testAPhraseWhoseInteriorCollapsesIntoAOneWordRunStillTerminatesAndEmpties() {
+        // "oh oh oh oh oh home" x5: the first pass is the one-word rule's (25 "oh"), which leaves
+        // five "home" touching; the second pass takes those; the third finds nothing.
+        let nested = phrase(["oh", "oh", "oh", "oh", "oh", "home"], times: 5, from: 0)
+        XCTAssertEqual(filtered([nested]), [])
+
+        // "oh oh oh home" x5: the interior is under the one-word floor, so the block's own
+        // period convicts it in one pass.
+        let shallow = phrase(["oh", "oh", "oh", "home"], times: 5, from: 0)
+        XCTAssertEqual(filtered([shallow]), [])
+
+        // The Highest Heaven specimen, pinned here for the ordering rule: ("yeah" + "oh" x6) x5
+        // + "yeah" is ALSO a seven-word block x5. The shortest period that convicts owns the
+        // pass, so the "oh" runs go first, the touching "yeah"s go next, and nothing stands.
+        var specimen: [TranscribedToken] = []
+        for copy in 0..<5 {
+            specimen += phrase(["yeah,"] + Array(repeating: "oh", count: 6), times: 1, from: Double(copy) * 3)
+        }
+        specimen += [token("yeah,", onset: 15)]
+        XCTAssertEqual(filtered([specimen]), [])
+    }
+
+    func testAPunctuationOnlyTokenInsideAPhraseBreaksThePattern() {
+        // The one-word rule's break, kept: a block that folds to nothing anywhere never matches.
+        let segment = phrase(["I'm", "gonna", "go", "..."], times: 8, from: 0)
+        XCTAssertEqual(filtered([segment]), segment.map(\.text))
+    }
+
+    func testThePhraseGuardIsDeterministic() {
+        let before = filler(7, "verse")
+        let after = filler(3, "next")
+        let segments = [
+            line(before, from: 1)
+                + phrase(["if", "you", "can", "hear", "me", "I'm", "not", "sure"], times: 8, from: 3),
+            phrase(["I'm", "gonna", "go"], times: 3, from: 30),
+            phrase(["I'm", "gonna", "go"], times: 5, from: 40) + line(after, from: 60),
+        ]
+        let first = WhisperLyricsEngine.filterArtifacts(segments: segments, audioDuration: 240)
+        let second = WhisperLyricsEngine.filterArtifacts(segments: segments, audioDuration: 240)
+
+        XCTAssertEqual(first.map(\.text), before + after)
+        XCTAssertEqual(first.map(\.text), second.map(\.text))
+        XCTAssertEqual(first.map(\.onsetTime), second.map(\.onsetTime))
+        XCTAssertEqual(first.map(\.duration), second.map(\.duration))
+        XCTAssertEqual(first.map(\.confidence), second.map(\.confidence))
+        XCTAssertEqual(first.map(\.startsSegment), second.map(\.startsSegment))
+    }
+
+    func testThePhraseWindowIsSixteenWordsAndTheFloorIsShared() {
+        XCTAssertEqual(WhisperLyricsEngine.repetitionPhraseMaxWords, 16)
+        // A 17-word block x5 is past the window and stays; a 16-word block x5 goes.
+        let sixteen = phrase(filler(16, "w"), times: 5, from: 0)
+        let seventeen = phrase(filler(17, "w"), times: 5, from: 0)
+        XCTAssertEqual(filtered([sixteen]), [])
+        XCTAssertEqual(filtered([seventeen]), seventeen.map(\.text))
+    }
+
+    // MARK: - Artifact filter rule 1, sign-off segments (P-2026-09-08-17, 2026-09-09)
+
+    func testAThanksForWatchingSegmentIsDroppedEvenAsTheTakesFirstSegment() {
+        // Avercage, Embers, as minted: token 0 of the take at 12.4 s, "Thanks" at 0.07 (under the
+        // ghost floor, alive only through the opening-word exemption), "for watching!" at 0.8+.
+        let signOff = [token("Thanks", onset: 12.44, duration: 1.4, confidence: 0.07),
+                       token("for", onset: 13.84, duration: 0, confidence: 0.89),
+                       token("watching!", onset: 13.84, duration: 14.36, confidence: 0.93)]
+        // The real opening, 20 s later, with the measured shape of a real first word: weak.
+        // (A stand-in line; the sung words stay in the corpus.)
+        let verse = [token("the", onset: 32.94, confidence: 0.10), token("verse", onset: 33.2, confidence: 0.9),
+                     token("begins", onset: 33.6, confidence: 0.9)]
+
+        let survivors = WhisperLyricsEngine.filterArtifacts(segments: [signOff, verse], audioDuration: 242)
+
+        // The sign-off is gone, and the opening-word exemption went to the first sung word.
+        XCTAssertEqual(survivors.map(\.text), ["the", "verse", "begins"])
+        XCTAssertEqual(survivors.first?.startsSegment, true)
+    }
+
+    func testOnlyTheNamedSignOffsAreDropped() {
+        let thankYou = [token("Thank", onset: 20), token("you", onset: 20.3), token("for", onset: 20.6),
+                        token("watching.", onset: 20.9)]
+        let listening = [token("thanks", onset: 20), token("for", onset: 20.3), token("listening", onset: 20.6)]
+        let thanks = [token("Thanks!", onset: 20)]
+        let verse = line("the verse begins", from: 33)
+
+        XCTAssertEqual(filtered([thankYou, verse]), ["the", "verse", "begins"])
+        XCTAssertEqual(filtered([listening, verse]), ["thanks", "for", "listening", "the", "verse", "begins"])
+        XCTAssertEqual(filtered([thanks, verse]), ["Thanks!", "the", "verse", "begins"])
+    }
+
+    func testALyricCarryingTheSignOffWordsAmongOthersIsKept() {
+        let lyric = line("thanks for watching over me", from: 10)
+        let split = [line("thanks for", from: 10), line("watching the stars", from: 11)]
+
+        XCTAssertEqual(filtered([lyric]), lyric.map(\.text))
+        XCTAssertEqual(filtered(split), split.flatMap { $0.map(\.text) })
+        XCTAssertFalse(WhisperLyricsEngine.isSignOffSegment([]))
+    }
+
     // MARK: - Pinned decode config
 
     func testPinnedDecodingOptionsMatchTheMeasuredRescueConfig() {

@@ -152,7 +152,63 @@ enum WhisperLyricsEngine {
     /// the junk (40.0% against 27.2% by run on that take). Runs are counted across segment
     /// boundaries, because the brake caps a chant at five per segment and the model restarts it
     /// in the next.
+    ///
+    /// Since P-2026-09-08-17 the run may be a PHRASE as well as a word: see
+    /// `repetitionPhraseMaxWords`. The floor is the same five for both.
     static let repetitionRunFloor = 5
+
+    /// THE PHRASE AXIS OF THE RUN GUARD (P-2026-09-08-17, Chris's word 2026-09-09: "i think so
+    /// why not?"). Rule (3) counted a run of ONE word. On the JamendoLyrics 20 (Sanctuary
+    /// `docs/audits/public-corpus-2026-09-08.md`) Whisper's collapses repeat a PHRASE instead:
+    /// "if you can hear me i'm not sure" x8, "you down i'm not gonna let" x11, "sure if you can
+    /// see it but i'm not" x13 (nine words, 117 tokens stamped on one onset), "i'm a fan of the
+    /// music i'm not a fan of the music" x8 (thirteen words), "i'm gonna go" x8, and on his own
+    /// guitar-only Instrumental 2 "that i'm not sure if i'm gonna be able to do" x8 (eleven
+    /// words). Every one has a longest single-word run of 1 or 2, so the one-word rule saw
+    /// nothing, and the brake never watches a period above four tokens. The rule now counts a
+    /// block of one to this many folded words repeated `repetitionRunFloor` times running, over
+    /// the same flattened stream, and drops every copy, exactly as it always did for one word.
+    ///
+    /// Sixteen, not eight: the two largest loops in the corpus are 9 and 13 words and his own is
+    /// 11. At five copies a 16-word block is 80 tokens, half a window's token budget, so a longer
+    /// period cannot reach the floor inside one window and is not worth watching. The floor
+    /// stays five for phrases: the longest consecutive repeat of any 5-16 word block in every
+    /// reference to hand (the 20 Jamendo sheets, his 17 sheets, the performed refs, 40 vocadito
+    /// refs) is FOUR (Cortez's five-word hook, Wordsmith's 15-word chorus, his Rodanthe hook,
+    /// "i'm human not only but still human"). Every copy goes, not keep-first-one: on the
+    /// hallucinated loops the two score the same offline (the first copy is as invented as the
+    /// rest, aligned-equal 0 to 4 of 64 to 117 tokens), on the sung vocalise loops drop-all is
+    /// 0.5 to 1.5 points better because the sheet never writes a vocalise out, and it is the
+    /// shape the one-word rule already had. THE EXPOSURE, stated plainly: two short hooks in the
+    /// Jamendo refs reach six copies running (a two-word block in Color_Out, a three-word block
+    /// in Ridgway). The brake forbids the sixth copy within one decode, so a correctly decoded
+    /// hook of that shape arrives as exactly five copies, which is this floor, and the guard
+    /// drops all five (10 to 20 real words) where the one-word rule kept them and the brake
+    /// alone cost one copy. The brake is the reason the copies land on the floor, not a
+    /// mitigation. It was not a measured loss in this mint only because Whisper decoded neither
+    /// hook as a run (two non-adjacent copies each), and no phrase on his 17 sheets passes x4.
+    /// If a real hook ever goes this way, the knob is keep-one for periods of two or more,
+    /// which bounds the loss to one copy at a measured cost of 0.5 to 1.5 points on the two
+    /// vocalise loops. The brake is deliberately NOT widened here: it sees one decode window's
+    /// BPE tokens, forbids one token that the model then routes around, and any change to it
+    /// re-opens the decode measurement; the guard alone is the measured change.
+    ///
+    /// MEASURED 2026-09-09 through the shipping tools (Sanctuary `tools/public-corpus/jamendolyrics/run.sh`
+    /// and `tools/lyric-wer/run-takes.sh`), the decode byte-identical before and after: Jamendo
+    /// Whisper pooled 42.3% to 36.9% WER (405 loop tokens and 30 sign-off tokens removed, 2410
+    /// errors to 2103), HILA 55.0 to 24.2, One Way Street 61.2 to 35.0, Wordsmith 49.4 to 39.8,
+    /// Crowd Pleaser 31.3 to 24.8, Like The Sun 40.4 to 31.7, Keep On 70.3 to 62.3, Fire Inside
+    /// 47.4 to 40.8, no song worse, Apple side untouched; the phrase table after holds nothing
+    /// above x4. His seventeen takes: fifteen byte-identical, two lose a sign-off (Heart Sing 40.3
+    /// to 38.4, Highest Heaven 22.7 to 21.0), mean 43.1% to 42.9%, human 11/12, limpia 9/9,
+    /// forever 8/8, sing 4/5, determinism control identical, decode seconds unchanged. Two lanes
+    /// off the headline moved too and belong on the record: Whisper `--drop-timeless` pooled
+    /// 36.5 to 35.9 but Wordsmith 39.8 to 39.9 inside it (531 to 520 hyp, 231 to 232 errors of
+    /// 581: the guard removes eleven loop tokens that carried real duration and the timeless
+    /// filter had kept, one of them sitting on a reference word), and the line-break harness's
+    /// whisper row went hit 41.3 to 40.8 on the corpus denominator (44.0 to 45.7 on the
+    /// harness's own), breaks 522 to 489, precision 67.0 to 70.8, F1 0.53 to 0.56.
+    static let repetitionPhraseMaxWords = 16
 
     // MARK: - Warming
 
@@ -405,12 +461,16 @@ enum WhisperLyricsEngine {
     /// 1. **"Music" caption segments** — a segment whose every token is the word "Music"
     ///    (any case/bracketing) is Whisper captioning an instrumental intro/fade, not a lyric.
     ///    Dropped whole. A segment where "music" appears among real words is a lyric and stays.
+    ///    The same door takes **sign-off segments** (P-2026-09-08-17): a segment whose folded
+    ///    words are exactly one of `signOffPhrases` ("Thanks for watching!", the model's
+    ///    captioned-video reflex over an instrumental intro, 3 of 20 Jamendo songs).
     /// 2. **Ghost words** — tokens with word probability below `ghostConfidenceFloor` (0.15);
     ///    hallucinations over no-vocal regions measured at 0.03-0.19. Tokens with nil
     ///    confidence are kept (nothing to judge them by; only the Whisper path sets confidence).
-    /// 3. **Repetition runs** — `repetitionRunFloor` (5) or more consecutive tokens folding to
-    ///    one word, counted across segment boundaries, are the decoder's collapse and are
-    ///    dropped whole. Confidence cannot catch this one: the loop's tokens carry 0.35 to 0.99.
+    /// 3. **Repetition runs**: `repetitionRunFloor` (5) or more consecutive copies of one
+    ///    folded word, or of one block of up to `repetitionPhraseMaxWords` folded words, counted
+    ///    across segment boundaries, are the decoder's collapse and are dropped whole.
+    ///    Confidence cannot catch this one: the loop's tokens carry 0.35 to 0.99.
     /// 4. **The "you" tail** — a lone low-confidence final token ending inside the last decode
     ///    window of the audio (Whisper's fade-out sign-off hallucination).
     ///
@@ -421,9 +481,11 @@ enum WhisperLyricsEngine {
         segments: [[TranscribedToken]],
         audioDuration: TimeInterval
     ) -> [TranscribedToken] {
-        // (1) "Music" caption segments — drop before the confidence floor: caption tokens can
-        // carry high probability (the model is confident it is captioning music).
-        var kept = segments.filter { !isMusicCaptionSegment($0) }
+        // (1) "Music" caption segments and sign-off segments: dropped before the confidence
+        // floor, because caption tokens can carry high probability (the model is confident it
+        // is captioning music) and because a sign-off that opens the take must not spend the
+        // opening-word exemption, which belongs to the first sung word behind it.
+        var kept = segments.filter { !isMusicCaptionSegment($0) && !isSignOffSegment($0) }
 
         // (2) Ghost-word floor, per token — EXCEPT the take's own first word, which Whisper
         // systematically under-scores for reasons unrelated to whether it was sung (see
@@ -471,8 +533,9 @@ enum WhisperLyricsEngine {
     }
 
     /// Rule (3) of `filterArtifacts`: drop every run of `repetitionRunFloor` or more consecutive
-    /// tokens (across segments, in stream order) that fold to one word, then drop any segment
-    /// emptied by it. Pure; segment membership of the survivors is unchanged.
+    /// copies (across segments, in stream order) of one folded word or of one block of up to
+    /// `repetitionPhraseMaxWords` folded words, then drop any segment emptied by it. Pure;
+    /// segment membership of the survivors is unchanged.
     ///
     /// REPEATED TO A FIXED POINT, and this is a measurement rather than a nicety (2026-09-02, the
     /// first harness run on 0.1.17): with the brake on, Highest Heaven's outro came back as
@@ -489,6 +552,14 @@ enum WhisperLyricsEngine {
     }
 
     /// One pass of rule (3). See `droppingRepetitionRuns` for why it is iterated.
+    ///
+    /// Periods are tried shortest first, and THE SHORTEST PERIOD THAT CONVICTS OWNS THE PASS;
+    /// the fixed point brings the rest. This keeps the one-word rule's passes byte-identical to
+    /// what they were, and it matters on the Highest Heaven specimen: "yeah" plus six "oh", five
+    /// times, then "yeah" is ALSO a seven-word block repeated five times, and letting period
+    /// seven convict in the same pass as the "oh" runs would leave the closing "yeah" standing
+    /// where the one-word passes empty it. A block that folds to nothing anywhere (a
+    /// punctuation-only token) never matches, the same break a run has always had.
     static func droppingRepetitionRunsOnce(_ segments: [[TranscribedToken]]) -> [[TranscribedToken]] {
         // Flatten with (segment, index) addresses so a run can be found across boundaries and
         // removed from the segments it spans.
@@ -499,17 +570,25 @@ enum WhisperLyricsEngine {
             }
         }
         var convicted = Set<Int>()   // positions in `addresses`
-        var start = 0
-        while start < addresses.count {
-            var end = start
-            let word = addresses[start].word
-            if !word.isEmpty {
-                while end + 1 < addresses.count, addresses[end + 1].word == word { end += 1 }
+        for period in 1...repetitionPhraseMaxWords {
+            var start = 0
+            while start + period <= addresses.count {
+                var repeats = 1
+                while start + (repeats + 1) * period <= addresses.count,
+                      (0..<period).allSatisfy({ offset in
+                          let word = addresses[start + offset].word
+                          return !word.isEmpty && addresses[start + repeats * period + offset].word == word
+                      }) {
+                    repeats += 1
+                }
+                if repeats >= repetitionRunFloor {
+                    for position in start..<(start + repeats * period) { convicted.insert(position) }
+                    start += repeats * period
+                } else {
+                    start += 1
+                }
             }
-            if end - start + 1 >= repetitionRunFloor {
-                for position in start...end { convicted.insert(position) }
-            }
-            start = end + 1
+            if !convicted.isEmpty { break }
         }
         guard !convicted.isEmpty else { return segments }
         var droppedAt: [Int: Set<Int>] = [:]
@@ -686,6 +765,35 @@ enum WhisperLyricsEngine {
             let letters = token.text.lowercased().filter { $0.isLetter }
             return letters == "music"
         }
+    }
+
+    /// WHISPER'S SIGN-OFF (P-2026-09-08-17). Trained on captioned video, the model fills a
+    /// stretch with no voice in it with "Thanks for watching!". Measured on the JamendoLyrics 20
+    /// (2026-09-08 mint): three of twenty songs, each as the take's FIRST segment over the
+    /// instrumental intro (12.4 s, 24.5 s and 21.5 s in), "Thanks" at confidence 0.04 to 0.07
+    /// kept only by the opening-word exemption and "for watching!" at 0.83 to 0.93 behind it,
+    /// the next real word twenty seconds later. The rule runs BEFORE the ghost floor, on the
+    /// whole segment, and that found the rest of the population the transcripts had hidden:
+    /// nine more "Thanks for watching!" segments over fades and breaks whose "Thanks" the floor
+    /// had already taken, leaving "for watching!" standing at 0.7 to 0.9 (Keep On x2, Falling
+    /// Star x2, Peyote, Embers, One Way Street, Fire Inside, Voices), and three "Thank you for
+    /// watching!" the same way (Like The Sun, and on his own takes Heart Sing at 258.8 s and
+    /// Highest Heaven at 148.3 s). No other sign-off ("thanks for listening", "subscribe", "see
+    /// you next time", "bye") occurred anywhere in the 20 Jamendo or his 17 decodes, so the list
+    /// is exactly the two spellings that were measured and nothing speculative. A segment whose
+    /// folded words are exactly one of these is dropped whole; a lyric that carries the words
+    /// among others stays. There is no confidence, position or timing condition, so a sung line
+    /// that is exactly these words in its own segment would go too: the 94 reference files to
+    /// hand (the 20 Jamendo refs, 40 vocadito refs, his 17 sheets, the performed refs) hold no
+    /// such line and none with "thank" and "watching" together, the same risk class as the
+    /// "Music" caption rule, accepted the same way.
+    static let signOffPhrases: Set<String> = ["thanks for watching", "thank you for watching"]
+
+    /// True when the segment's folded words, joined by single spaces, are exactly one of
+    /// `signOffPhrases`. An empty segment is not a sign-off.
+    static func isSignOffSegment(_ segment: [TranscribedToken]) -> Bool {
+        guard !segment.isEmpty else { return false }
+        return signOffPhrases.contains(segment.map { RepetitionBrake.fold($0.text) }.joined(separator: " "))
     }
 
     // MARK: - Audio preparation
