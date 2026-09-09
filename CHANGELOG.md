@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.19] - 2026-09-08
+
+### Fixed — the same take always gets the same key and the same chords: two hash-order ties resolved
+
+Chris's ruling, 2026-09-08 (Songcatcher P-2026-09-08-09, "deterministic sounds ok"): a listen and a
+re-listen of the same audio must not disagree. Two places in the chord path depended on Swift's
+per-process hash seed, and both are gone.
+
+1. **The key.** `ProgressionAnalyzer.inferKey` took `max` over a `[MusicalKey: Double]`, so an EXACT
+   tie between two keys resolved by Dictionary order, and because the key biases the second chord
+   decode (`ChordSequenceDecoder.nonDiatonicPenalty`) a tie flipped chords as well as the key. Ties
+   are not rare: 72 of the 576 two-chord sequences over major and minor triads tie at the top, and
+   22 of the 360 GuitarSet excerpts changed key between two runs of 0.1.18 (the app's
+   `docs/audits/public-corpus-2026-09-08.md`). `ProgressionAnalyzer_KeyInference.rankedKeys` now
+   sorts the 24 keys in a TOTAL order: score, then the key whose tonic is the opening chord's root,
+   then the closing chord's root, then the lower root, then major before minor, the cues and the
+   stable tail `MelodyKeyInference` already used. Wherever there is no tie the winner is unchanged.
+2. **The chord confidences.** `NoteChordIdentifier.score` summed pitch-class weights `for pc in
+   chordSet` over a `Set<Int>`, so the sum's last bit depended on iteration order: the same take
+   scored the same chord 0.6599999999999998 in one run and 0.6599999999999999 in the next (17 of 18
+   corpus takes, 0.1.16's record). The chord tones are now summed in ascending pitch-class order.
+
+Measured (Mac, release `take-probe`, two runs of the same binary over the 18-take corpus, every
+field but `extractSeconds` compared byte for byte): before, 1 of 18 identical, 17 differing in chord
+confidences, the record's own 36-of-38 flip among them; after, 18 of 18 identical, and against the pre-fix run no take changed a chord name, a boundary or its key. GuitarSet, the 31 excerpts
+whose key or CSR differed between 0.1.18's two full runs, run twice each: 0 of 31 differ in key, CSR or tempo (before: all 31 did, by construction). On the 22 whose KEY had flipped, the fixed order lands on the annotated key 17 times, against 11 and 6 in the two 0.1.18 runs, so the opening-chord cue is also the better guess on a tie; the 9 CSR-only flips each settle on one of their two earlier values.
+
+Tests: `ProgressionAnalyzerTieBreakTests` (6): the tie order on hand cases (C then Em is C major; C
+then Gm is G major; C, D, Bm is D minor; same-root ties rank major first), the stated order on every
+one of the 576 two-chord sequences with the tie count pinned at 72, and a clear winner still the
+maximum. The full suite runs in the release commit.
+
 ## [0.1.18] - 2026-09-07
 
 ### Fixed — a take that opens with playing keeps its first lines: a silent slice gets one second look
