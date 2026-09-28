@@ -8,7 +8,9 @@ import Foundation
 /// raw detected notes.
 ///
 /// **Key inference strategy:**
-/// 1. If chord segments produce a usable progression (≥2 distinct chords), use ProgressionAnalyzer.inferKey (chord-based).
+/// 1. If chord segments produce a usable progression (≥2 distinct chords), use `chordToneKey`: the
+///    Krumhansl-Kessler key profile best correlated with the chords' tones, each weighted by how long its
+///    segment sounds (0.1.22; before it, `ProgressionAnalyzer.inferKey`, which stays public and unchanged).
 /// 2. Else if detected notes are populated, use MelodyKeyInference.infer (pitch-class-based) and take the top candidate's key.
 /// 3. Else Result.key is nil.
 ///
@@ -574,13 +576,84 @@ public enum AudioExtractor {
     }
 
     /// Chord-based key only (the second decode pass's gate): ≥2 distinct decoded chords →
-    /// `ProgressionAnalyzer.inferKey`; nil otherwise. Mirrors `inferKey`'s first branch WITHOUT the
-    /// melody fallback — a fallback key isn't progression evidence and must not re-bias chord naming.
+    /// `chordToneKey`; nil otherwise. Mirrors `inferKey`'s first branch WITHOUT the melody fallback —
+    /// a fallback key isn't progression evidence and must not re-bias chord naming.
     private static func chordBasedKey(from segments: [ChordSegment]) -> MusicalKey? {
-        guard segments.count >= 2 else { return nil }
-        let chords = segments.map { $0.chord }
-        guard Set(chords).count >= 2 else { return nil }
-        return ProgressionAnalyzer.inferKey(from: chords)
+        chordToneKey(from: segments)
+    }
+
+    /// The Krumhansl-Kessler key profiles (Krumhansl 1990): how strongly each of the twelve pitch
+    /// classes, counted up from the tonic, belongs to a major and to a minor key.
+    static let majorKeyProfile: [Double] = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
+    static let minorKeyProfile: [Double] = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
+
+    /// THE KEY FROM THE CHORDS (0.1.22; Songcatcher `docs/audits/key-rule-2026-09-27.md`, P-2026-09-27-43,
+    /// Chris's "yes why not?" of 2026-09-28): every segment's chord tones, weighted by the seconds the
+    /// segment sounds, correlated with the 24 Krumhansl-Kessler key profiles; the best-correlated key wins.
+    /// Nothing new is heard: the chords are the ones this pipeline already named. Nil with fewer than two
+    /// segments or two distinct chords (the melody fallback's territory), or when no segment has length.
+    ///
+    /// WHY IT REPLACED `ProgressionAnalyzer.inferKey` HERE. That scorer walks the chord LIST (a two-second
+    /// flicker counts as much as a verse-long chord) and pays +1 to any chord on a key's root whatever its
+    /// third, plus +1.5 for a major chord on a minor key's flat seventh. A played Bm-G-A song whose A was
+    /// voiced Asus4/Asus2/A5 (eleven segments, none with a third) read A minor, the Bm it is built on
+    /// outvoted (A minor 23, B minor 17). Measured with the SHIPPING pipeline on GuitarSet (the app's
+    /// GuitarSet lane, the same 336 annotated excerpts both ways): key exact 48.8% → 64.0%, relative-or-
+    /// exact 66.1% → 71.1%, root 52.4% → 66.1%, every style up (singer-songwriter 58.3 → 75.0, comping
+    /// 60.7 → 79.8); chord accuracy unmoved (mean CSR 51.26% → 51.32%) although this key also steers the
+    /// second decode's prior. An offline replay of the old scorer reproduced its key on all 360 excerpts
+    /// before any variant was trusted; the root-agrees and duration-weighted versions of the old scorer
+    /// gained under a point, and the profile counted once per chord 7 points: time is the ingredient.
+    ///
+    /// Ties (exactly equal correlations) resolve in the total order `ProgressionAnalyzer` uses since
+    /// 0.1.19: the opening chord's root, then the closing chord's root, then the lower root, then major.
+    /// `ProgressionAnalyzer.inferKey` itself is public API and is NOT changed.
+    static func chordToneKey(from segments: [ChordSegment]) -> MusicalKey? {
+        guard segments.count >= 2, Set(segments.map { $0.chord }).count >= 2 else { return nil }
+        var profile = [Double](repeating: 0, count: 12)
+        for segment in segments {
+            let seconds = max(0, segment.endTime - segment.startTime)
+            for interval in segment.chord.quality.intervals {
+                profile[(segment.chord.root.rawValue + interval) % 12] += seconds
+            }
+        }
+        guard profile.contains(where: { $0 > 0 }) else { return nil }
+
+        let opening = segments.first?.chord.root
+        let closing = segments.last?.chord.root
+        var ranked: [(key: MusicalKey, score: Double)] = []
+        ranked.reserveCapacity(24)
+        for note in NoteName.allCases {
+            for (mode, template) in [(KeyMode.major, majorKeyProfile), (KeyMode.minor, minorKeyProfile)] {
+                // The template rotated so its tonic sits on `note`.
+                let rotated = (0..<12).map { template[($0 - note.rawValue + 12) % 12] }
+                ranked.append((MusicalKey(root: note, mode: mode), pearson(profile, rotated)))
+            }
+        }
+        ranked.sort { a, b in
+            if a.score != b.score { return a.score > b.score }
+            let aOpens = a.key.root == opening, bOpens = b.key.root == opening
+            if aOpens != bOpens { return aOpens }
+            let aCloses = a.key.root == closing, bCloses = b.key.root == closing
+            if aCloses != bCloses { return aCloses }
+            if a.key.root.rawValue != b.key.root.rawValue { return a.key.root.rawValue < b.key.root.rawValue }
+            return a.key.mode == .major && b.key.mode == .minor
+        }
+        return ranked.first?.key
+    }
+
+    /// Pearson correlation of two 12-element profiles; 0 when either is flat.
+    static func pearson(_ x: [Double], _ y: [Double]) -> Double {
+        let meanX = x.reduce(0, +) / Double(x.count), meanY = y.reduce(0, +) / Double(y.count)
+        var numerator = 0.0, sumX = 0.0, sumY = 0.0
+        for index in x.indices {
+            let dx = x[index] - meanX, dy = y[index] - meanY
+            numerator += dx * dy
+            sumX += dx * dx
+            sumY += dy * dy
+        }
+        let denominator = (sumX * sumY).squareRoot()
+        return denominator > 0 ? numerator / denominator : 0
     }
 
     /// Note-native segment cleanup (0.1.1): trim weak pick-attack/release edge runs and absorb a single
@@ -910,13 +983,9 @@ public enum AudioExtractor {
     }
 
     private static func inferKey(from chordSegments: [ChordSegment], fallbackNotes: [DetectedNote]) -> MusicalKey? {
-        // First try: chord-based inference from segment progression
-        if chordSegments.count >= 2 {
-            let chords = chordSegments.map { $0.chord }
-            let distinctChords = Set(chords)
-            if distinctChords.count >= 2, let key = ProgressionAnalyzer.inferKey(from: chords) {
-                return key
-            }
+        // First try: the chords' tones over their time (0.1.22; see `chordToneKey`).
+        if let key = chordToneKey(from: chordSegments) {
+            return key
         }
 
         // Fallback: pitch-class-based inference from detected notes
