@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.22] - 2026-09-28
+
+### Fixed — the key comes from the chords' tones over their time: a Bm-G-A song whose A has no third no longer reads A minor
+
+Chris's yes, 2026-09-28 (Songcatcher P-2026-09-27-43, "yes why not?"; the measurement is the app's
+`docs/audits/key-rule-2026-09-27.md`). His take of a friend's song, played Bm, G and A through a PA,
+read A minor: `ProgressionAnalyzer.inferKey` walks the chord list (a two-second flicker counts as much as
+a verse-long chord), pays +1 to any chord on a key's root whatever its third, and +1.5 to a major chord on
+a minor key's flat seventh. His A was voiced Asus4, Asus2 and A5 in eleven short segments, none with a
+third, so A minor scored 23 and the B minor the song is built on 17.
+
+`AudioExtractor.chordToneKey` now names the key on both uses inside the pipeline, the second decode's
+prior and the reported `Result.key`: every segment's chord tones, weighted by the seconds it sounds,
+correlated with the 24 Krumhansl-Kessler key profiles, ties in the 0.1.19 total order. The gates are
+unchanged (at least two segments and two distinct chords, the melody fallback otherwise).
+`ProgressionAnalyzer.inferKey` is public API and is not changed.
+
+Measured through the shipping pipeline (the app's GuitarSet lane, the same 336 annotated excerpts both
+ways; the Jazz1 chunk printed no key lines in either run): key exact 48.8% to 64.0%, relative-or-exact
+66.1% to 71.1%, root 52.4% to 66.1%, every style up (bossa nova 52.8 to 61.1, funk 38.9 to 52.8, jazz
+37.5 to 52.1, rock 52.8 to 75.0, singer-songwriter 58.3 to 75.0), and mean CSR 51.26% to 51.32%: the chords
+did not move although this key steers the second decode. An offline replay of the old scorer reproduced
+its key on all 360 excerpts first; reweighting the old scorer by time, or paying the root bonus only when
+the third agrees, gained under a point each.
+
+Consumers: a take's key changes on its next analysis, and with it the spelling of its chords (sharps or
+flats follow the key) and, where the second decode changes its mind, a chord here and there (his 16 probed
+takes kept 98 to 100% of their chord names; six changed key).
+
+Noted, not changed: `Chord` compares by root and quality but its synthesized `Hashable` hashes its id,
+so the "two distinct chords" gate counts two pipeline-made segments of the same chord as two. It was so
+before this release; changing when the melody fallback runs is its own measured decision.
+
 ## [0.1.21] - 2026-09-09
 
 ### Fixed — a phrase the decoder gets stuck on no longer lands on the lyric sheet: the run guard sees repeated phrases, and the sign-off hallucination is dropped
